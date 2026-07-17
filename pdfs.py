@@ -15,6 +15,12 @@ from difflib import SequenceMatcher
 
 import pdfplumber
 
+try:
+    import pytesseract
+    OCR_DISPONIVEL = True
+except ImportError:
+    OCR_DISPONIVEL = False
+
 # ---------------------------------------------------------------------------
 # Campos que devem ser buscados no documento.
 # Adicione, remova ou edite livremente.
@@ -66,11 +72,49 @@ def parece_valor(texto: str) -> bool:
 # ---------------------------------------------------------------------------
 # Extração de texto e tabelas do PDF
 # ---------------------------------------------------------------------------
+def ocr_pagina(pagina, resolucao: int = 200) -> str:
+    """
+    IMPORTANTE: erros de OCR agora são avisados em stderr (em vez de
+    engolidos em silêncio) para facilitar diagnosticar ambientes onde o
+    Tesseract/pacote de idioma não está instalado.
+    """
+    if not OCR_DISPONIVEL:
+        print(
+            "[AVISO] pytesseract não está instalado neste ambiente — "
+            "OCR desativado, páginas só-imagem (ex.: certificados de "
+            "assinatura) não serão lidas.",
+            file=sys.stderr,
+        )
+        return ""
+    try:
+        imagem = pagina.to_image(resolution=resolucao).original
+    except Exception as erro:
+        print(f"[AVISO] Falha ao converter página em imagem para OCR: {erro}", file=sys.stderr)
+        return ""
+
+    ultimo_erro = None
+    for idioma in ("por", "eng", None):
+        try:
+            if idioma:
+                return pytesseract.image_to_string(imagem, lang=idioma)
+            return pytesseract.image_to_string(imagem)
+        except Exception as erro:
+            ultimo_erro = erro
+            continue
+    print(f"[AVISO] OCR falhou para todos os idiomas testados: {ultimo_erro}", file=sys.stderr)
+    return ""
+
+
 def extrair_texto(caminho_pdf: str) -> str:
     partes = []
     with pdfplumber.open(caminho_pdf) as pdf:
         for pagina in pdf.pages:
-            partes.append(pagina.extract_text(layout=True) or "")
+            texto_pagina = pagina.extract_text(layout=True) or ""
+            if len(texto_pagina.strip()) < 200 and pagina.images:
+                texto_ocr = ocr_pagina(pagina)
+                if texto_ocr:
+                    texto_pagina = f"{texto_pagina}\n{texto_ocr}"
+            partes.append(texto_pagina)
     return "\n".join(partes)
 
 
@@ -83,13 +127,6 @@ def extrair_tabelas(caminho_pdf: str):
 
 
 def mapear_campos_em_tabela(tabela):
-    """
-    Varre uma tabela e devolve dois resultados:
-      - pares_rotulo_valor: linhas soltas do tipo "Rótulo ... Valor"
-      - cabecalho_valor: dicionário {texto_do_cabecalho: valor}, construído
-        juntando cabeçalhos que se quebram em mais de uma linha e casando
-        (na ordem em que aparecem) com a linha de dados correspondente.
-    """
     linhas_info = []
     for linha in tabela:
         celulas = [(i, c.strip()) for i, c in enumerate(linha) if c and c.strip()]
@@ -109,15 +146,11 @@ def mapear_campos_em_tabela(tabela):
 
         tem_valor = any(parece_valor(c) for _, c in celulas)
 
-        # Linha "rótulo ... valor" isolada (ex.: "Valor total da solicitação | R$ 6.719,92")
         if tem_valor and len(celulas) == 2 and not parece_valor(celulas[0][1]):
             pares_rotulo_valor.append((celulas[0][1], celulas[1][1]))
             i += 1
             continue
 
-        # Bloco de cabeçalho: linha(s) em que NENHUMA célula parece valor.
-        # Uma linha de cabeçalho pode ter só 2 células (ex.: continuação de um
-        # cabeçalho quebrado em duas linhas), então não filtramos por tamanho aqui.
         if not tem_valor:
             bloco_cabecalho = [celulas]
             j = i + 1
@@ -129,26 +162,23 @@ def mapear_campos_em_tabela(tabela):
                 else:
                     break
 
-            # Junta os textos de cabeçalho por posição de coluna original
             colunas = {}
             for celulas_linha in bloco_cabecalho:
                 for col, texto in celulas_linha:
                     colunas[col] = (colunas.get(col, "") + " " + texto).strip()
             cabecalhos_em_ordem = [colunas[c] for c in sorted(colunas.keys())]
 
-            # Linhas de dados seguintes (podem ser mais de um item)
             while j < total:
                 dados = linhas_info[j]
                 if not dados:
                     break
                 dados_tem_valor = any(parece_valor(c) for _, c in dados)
                 if not dados_tem_valor:
-                    break  # começou outro bloco de cabeçalho
+                    break
                 if len(dados) == 2 and not parece_valor(dados[0][1]):
-                    break  # é uma linha "rótulo: valor" isolada, não dado da tabela
+                    break
                 valores_em_ordem = [texto for _, texto in dados]
                 for cabecalho, valor in zip(cabecalhos_em_ordem, valores_em_ordem):
-                    # Não sobrescreve um valor já encontrado (mantém o primeiro item)
                     cabecalho_valor.setdefault(cabecalho, valor)
                 j += 1
 
@@ -175,9 +205,6 @@ def buscar_em_tabelas(tabelas, campo: str):
     return None
 
 
-# ---------------------------------------------------------------------------
-# Busca no texto corrido (fallback para campos que não estão em tabela)
-# ---------------------------------------------------------------------------
 def buscar_em_texto(texto: str, campo: str):
     campo_escapado = re.escape(campo)
 
@@ -192,98 +219,81 @@ def buscar_em_texto(texto: str, campo: str):
     match = padrao_linha_seguinte.search(texto)
     if match:
         valor = match.group(1).strip()
-        # Só aceita se a linha seguinte parecer um valor de fato (evita pegar
-        # continuação de outro rótulo, como acontece em cabeçalhos de tabela)
         if valor and (parece_valor(valor) or len(valor.split()) <= 6):
             return valor
 
     return None
 
 
-# ---------------------------------------------------------------------------
-# Padrões especiais: alguns campos não aparecem como "Rótulo: valor", mas sim
-# embutidos dentro de uma frase do documento. Cada campo pode ter uma lista
-# de padrões alternativos, testados em ordem até um dar certo.
-# ---------------------------------------------------------------------------
 PADROES_ESPECIAIS = {
     "Data do fornecimento": [
-        # Ex.: "firmada e assinada com essa empresa em 17 de outubro de 2025"
-        # (\bem\s+ exige que "em" seja seguido de dígito, evitando casar com o "em" de "empresa")
         r"firmad[ao]\s+e\s+assinad[ao].{0,80}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4})",
-        # Ex.: "contrato ... assinado em 17/10/2025" ou "assinada em 17 de outubro de 2025"
         r"assinad[ao].{0,60}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
-        # Ex.: "firmado em 17/10/2025"
         r"firmad[ao].{0,60}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
     ],
     "DGCO nº": [
-        # Ex.: "contrato DGCO nº 02732-2025, referente..."
-        r"DGCO\s*n[ºo°]?\s*([\d./\-]+)",
+        # \.? e :? extras: cobre "DGCO n.º", "DGCO nº:", "DGCO Nº :" etc.
+        r"DGCO\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)",
     ],
     "OC Master nº": [
-        # Ex.: "OC Master nº 196371"
-        r"OC\s*Master\s*n[ºo°]?\s*([\d./\-]+)",
+        r"OC\s*Master\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)",
+        r"\bOC\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)",
     ],
 }
 
 
 def buscar_com_padroes_especiais(texto: str, campo: str):
-    padroes = PADROES_ESPECIAIS.get(campo)
-    if not padroes:
-        return None
-    for padrao in padroes:
-        match = re.search(padrao, texto, re.IGNORECASE | re.DOTALL)
-        if match:
-            return " ".join(match.group(1).split())
+    """
+    Antes: exigia que `campo` fosse EXATAMENTE igual (char a char) a uma
+    chave de PADROES_ESPECIAIS — se o texto em CAMPOS_PROCURADOS estivesse
+    escrito de forma levemente diferente (espaço a mais, "OC nº" em vez de
+    "OC Master nº", etc.), a busca falhava silenciosamente.
+    Agora usa a mesma comparação "aproximada" (parecido/normalizar) já usada
+    no resto do script, então funciona mesmo com pequenas variações de texto.
+    """
+    for chave, padroes in PADROES_ESPECIAIS.items():
+        if not parecido(chave, campo):
+            continue
+        for padrao in padroes:
+            match = re.search(padrao, texto, re.IGNORECASE | re.DOTALL)
+            if match:
+                return " ".join(match.group(1).split())
     return None
 
 
-# ---------------------------------------------------------------------------
-# Verificação de assinatura eletrônica
-# ---------------------------------------------------------------------------
-# IMPORTANTE: isto é uma checagem TEXTUAL (procura o carimbo/texto que a
-# plataforma de assinatura grava no PDF), não uma verificação criptográfica.
-# Um PDF com assinatura digital real (ICP-Brasil, por exemplo) tem um objeto
-# /Sig com /ByteRange no arquivo; esses documentos, em geral, só trazem um
-# texto informativo ("Assinado eletronicamente através do sistema X").
-# ---------------------------------------------------------------------------
-
-# Frases que indicam que o documento foi assinado eletronicamente,
-# uma por plataforma/formato conhecido. Adicione outras conforme aparecerem.
 INDICADORES_ASSINATURA = [
     ("Aprovve", r"assinado\s+eletronicamente\s+atrav[eé]s\s+do\s+sistema\s+aprovve"),
+    ("D4Sign", r"d4sign|certificado\s+pela\s+d4sign|padr[aã]o\s+icp[\s-]*brasil"),
     ("GOV.BR / ICP-Brasil", r"assinado\s+de\s+forma\s+eletr[oô]nica|verifique\s+em\s+https?://verificador\.iti\.gov\.br|assinatura\s+qualificada"),
     ("DocuSign", r"docusign"),
     ("Clicksign", r"clicksign"),
     ("Genérico", r"assinado\s+digitalmente|documento\s+assinado\s+eletronicamente"),
 ]
 
-# Captura "NOME - CARGO - DD/MM/AAAA – HH:MM", formato usado pelo Aprovve
-# (e possivelmente outras plataformas com o mesmo padrão de rodapé).
 PADRAO_SIGNATARIO = re.compile(
     r"([A-ZÀ-Ú][A-ZÀ-Ú0-9\s/]+?)\s-\s(.+?)\s-\s(\d{2}/\d{2}/\d{4})\s[–-]\s(\d{2}:\d{2})"
 )
 
-# Número do processo/protocolo de assinatura (ex.: "sob o número 2026/007058")
+PADRAO_SIGNATARIO_D4SIGN = re.compile(
+    r"([A-ZÀ-Ú][A-ZÀ-Ú\s]{3,60}?)\s+"
+    r"(Assinou como parte|Assinou como testemunha|Aprovou|Acusou recebimento|Rejeitou)\b"
+    r".*?DATE[_ ]?ATOM:\s*(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}):\d{2}",
+    re.DOTALL,
+)
+
 PADRAO_NUMERO_PROCESSO = re.compile(
     r"sob\s+o\s+n[uú]mero\s+([\w./\-]+)", re.IGNORECASE
 )
 
+# A D4Sign não usa a frase "sob o número X"; ela identifica o envelope pelo
+# "Código do documento <uuid>" impresso no certificado. Usado como
+# alternativa quando PADRAO_NUMERO_PROCESSO não encontra nada.
+PADRAO_CODIGO_D4SIGN = re.compile(
+    r"[Cc][oó]digo\s+do\s+documento\s+([0-9a-fA-F\-]{20,40})"
+)
+
 
 def verificar_assinatura(texto: str) -> dict:
-    """
-    Analisa o texto do PDF em busca de indícios de assinatura eletrônica.
-    Devolve um dicionário:
-        {
-          "assinado": bool,
-          "sistema": str ou None,         # plataforma identificada
-          "numero_processo": str ou None, # nº de protocolo, se houver
-          "signatarios": [                # lista de assinantes encontrados
-              {"nome": ..., "cargo": ..., "data": ..., "hora": ...}, ...
-          ],
-        }
-    Aviso: é uma checagem textual (procura o carimbo da plataforma), não uma
-    verificação criptográfica da assinatura.
-    """
     resultado = {
         "assinado": False,
         "sistema": None,
@@ -300,7 +310,12 @@ def verificar_assinatura(texto: str) -> dict:
     match_numero = PADRAO_NUMERO_PROCESSO.search(texto)
     if match_numero:
         resultado["numero_processo"] = match_numero.group(1)
+    else:
+        match_codigo = PADRAO_CODIGO_D4SIGN.search(texto)
+        if match_codigo:
+            resultado["numero_processo"] = match_codigo.group(1)
 
+    # Formato "NOME - CARGO - DD/MM/AAAA – HH:MM" (Aprovve e afins)
     for nome, cargo, data, hora in PADRAO_SIGNATARIO.findall(texto):
         resultado["signatarios"].append({
             "nome": " ".join(nome.split()),
@@ -309,25 +324,30 @@ def verificar_assinatura(texto: str) -> dict:
             "hora": hora,
         })
 
-    # Se achou signatários com nome/data mas nenhuma frase-indicador bateu,
-    # ainda assim considera assinado (documento pode usar uma plataforma
-    # não mapeada em INDICADORES_ASSINATURA, mas com o mesmo padrão de rodapé)
+    # Formato do bloco "Eventos do documento" da D4Sign (era definido mas
+    # nunca chamado — por isso a assinatura era detectada como "assinado",
+    # mas a lista de signatários ficava sempre vazia nesse tipo de PDF).
+    ja_vistos = {(s["nome"], s["data"], s["hora"]) for s in resultado["signatarios"]}
+    for nome, acao, ano, mes, dia, hora in PADRAO_SIGNATARIO_D4SIGN.findall(texto):
+        data = f"{dia}/{mes}/{ano}"
+        chave = (" ".join(nome.split()), data, hora)
+        if chave in ja_vistos:
+            continue
+        ja_vistos.add(chave)
+        resultado["signatarios"].append({
+            "nome": " ".join(nome.split()),
+            "cargo": acao,  # aqui "cargo" guarda a ação: Assinou / Aprovou / etc.
+            "data": data,
+            "hora": hora,
+        })
+
     if resultado["signatarios"] and not resultado["assinado"]:
         resultado["assinado"] = True
 
     return resultado
 
 
-# ---------------------------------------------------------------------------
-# Função reutilizável (chamada pelo main.py e também usável via CLI)
-# ---------------------------------------------------------------------------
 def processar_pdf(caminho_pdf: str) -> dict:
-    """
-    Analisa o PDF em `caminho_pdf` e devolve um dicionário
-    {campo: valor_encontrado_ou_None} para cada campo em CAMPOS_PROCURADOS,
-    mais a chave especial "_assinatura" com o resultado de verificar_assinatura().
-    Lança exceção se o arquivo não puder ser aberto/lido.
-    """
     texto = extrair_texto(caminho_pdf)
     tabelas = extrair_tabelas(caminho_pdf)
 
@@ -369,9 +389,6 @@ def imprimir_resultado(caminho_pdf: str, resultado: dict) -> None:
         print("[ASSINATURA] Nenhum indício de assinatura eletrônica encontrado no documento.")
 
 
-# ---------------------------------------------------------------------------
-# Programa principal (uso via linha de comando, standalone)
-# ---------------------------------------------------------------------------
 def main():
     if len(sys.argv) < 2:
         print("Uso: python pdfs.py caminho/do/arquivo.pdf")
