@@ -238,12 +238,94 @@ def buscar_com_padroes_especiais(texto: str, campo: str):
 
 
 # ---------------------------------------------------------------------------
+# Verificação de assinatura eletrônica
+# ---------------------------------------------------------------------------
+# IMPORTANTE: isto é uma checagem TEXTUAL (procura o carimbo/texto que a
+# plataforma de assinatura grava no PDF), não uma verificação criptográfica.
+# Um PDF com assinatura digital real (ICP-Brasil, por exemplo) tem um objeto
+# /Sig com /ByteRange no arquivo; esses documentos, em geral, só trazem um
+# texto informativo ("Assinado eletronicamente através do sistema X").
+# ---------------------------------------------------------------------------
+
+# Frases que indicam que o documento foi assinado eletronicamente,
+# uma por plataforma/formato conhecido. Adicione outras conforme aparecerem.
+INDICADORES_ASSINATURA = [
+    ("Aprovve", r"assinado\s+eletronicamente\s+atrav[eé]s\s+do\s+sistema\s+aprovve"),
+    ("GOV.BR / ICP-Brasil", r"assinado\s+de\s+forma\s+eletr[oô]nica|verifique\s+em\s+https?://verificador\.iti\.gov\.br|assinatura\s+qualificada"),
+    ("DocuSign", r"docusign"),
+    ("Clicksign", r"clicksign"),
+    ("Genérico", r"assinado\s+digitalmente|documento\s+assinado\s+eletronicamente"),
+]
+
+# Captura "NOME - CARGO - DD/MM/AAAA – HH:MM", formato usado pelo Aprovve
+# (e possivelmente outras plataformas com o mesmo padrão de rodapé).
+PADRAO_SIGNATARIO = re.compile(
+    r"([A-ZÀ-Ú][A-ZÀ-Ú0-9\s/]+?)\s-\s(.+?)\s-\s(\d{2}/\d{2}/\d{4})\s[–-]\s(\d{2}:\d{2})"
+)
+
+# Número do processo/protocolo de assinatura (ex.: "sob o número 2026/007058")
+PADRAO_NUMERO_PROCESSO = re.compile(
+    r"sob\s+o\s+n[uú]mero\s+([\w./\-]+)", re.IGNORECASE
+)
+
+
+def verificar_assinatura(texto: str) -> dict:
+    """
+    Analisa o texto do PDF em busca de indícios de assinatura eletrônica.
+    Devolve um dicionário:
+        {
+          "assinado": bool,
+          "sistema": str ou None,         # plataforma identificada
+          "numero_processo": str ou None, # nº de protocolo, se houver
+          "signatarios": [                # lista de assinantes encontrados
+              {"nome": ..., "cargo": ..., "data": ..., "hora": ...}, ...
+          ],
+        }
+    Aviso: é uma checagem textual (procura o carimbo da plataforma), não uma
+    verificação criptográfica da assinatura.
+    """
+    resultado = {
+        "assinado": False,
+        "sistema": None,
+        "numero_processo": None,
+        "signatarios": [],
+    }
+
+    for nome_sistema, padrao in INDICADORES_ASSINATURA:
+        if re.search(padrao, texto, re.IGNORECASE):
+            resultado["assinado"] = True
+            resultado["sistema"] = nome_sistema
+            break
+
+    match_numero = PADRAO_NUMERO_PROCESSO.search(texto)
+    if match_numero:
+        resultado["numero_processo"] = match_numero.group(1)
+
+    for nome, cargo, data, hora in PADRAO_SIGNATARIO.findall(texto):
+        resultado["signatarios"].append({
+            "nome": " ".join(nome.split()),
+            "cargo": " ".join(cargo.split()),
+            "data": data,
+            "hora": hora,
+        })
+
+    # Se achou signatários com nome/data mas nenhuma frase-indicador bateu,
+    # ainda assim considera assinado (documento pode usar uma plataforma
+    # não mapeada em INDICADORES_ASSINATURA, mas com o mesmo padrão de rodapé)
+    if resultado["signatarios"] and not resultado["assinado"]:
+        resultado["assinado"] = True
+
+    return resultado
+
+
+# ---------------------------------------------------------------------------
 # Função reutilizável (chamada pelo main.py e também usável via CLI)
 # ---------------------------------------------------------------------------
 def processar_pdf(caminho_pdf: str) -> dict:
     """
     Analisa o PDF em `caminho_pdf` e devolve um dicionário
-    {campo: valor_encontrado_ou_None} para cada campo em CAMPOS_PROCURADOS.
+    {campo: valor_encontrado_ou_None} para cada campo em CAMPOS_PROCURADOS,
+    mais a chave especial "_assinatura" com o resultado de verificar_assinatura().
     Lança exceção se o arquivo não puder ser aberto/lido.
     """
     texto = extrair_texto(caminho_pdf)
@@ -259,16 +341,32 @@ def processar_pdf(caminho_pdf: str) -> dict:
 
         resultado[campo] = " ".join(valor.split()) if valor else None
 
+    resultado["_assinatura"] = verificar_assinatura(texto)
+
     return resultado
 
 
 def imprimir_resultado(caminho_pdf: str, resultado: dict) -> None:
     print(f"Documento analisado: {caminho_pdf}\n")
     for campo, valor in resultado.items():
+        if campo == "_assinatura":
+            continue
         if valor:
             print(f"[SUCESSO] Campo '{campo}' encontrado. Valor: {valor}")
         else:
             print(f"[ERRO] Não foi possível encontrar o campo '{campo}' no documento.")
+
+    assinatura = resultado.get("_assinatura", {})
+    print()
+    if assinatura.get("assinado"):
+        sistema = assinatura.get("sistema") or "não identificado"
+        print(f"[ASSINATURA] Documento assinado. Sistema: {sistema}")
+        if assinatura.get("numero_processo"):
+            print(f"[ASSINATURA] Nº do processo: {assinatura['numero_processo']}")
+        for s in assinatura.get("signatarios", []):
+            print(f"[ASSINATURA]   - {s['nome']} ({s['cargo']}) em {s['data']} {s['hora']}")
+    else:
+        print("[ASSINATURA] Nenhum indício de assinatura eletrônica encontrado no documento.")
 
 
 # ---------------------------------------------------------------------------
