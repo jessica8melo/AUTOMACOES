@@ -347,12 +347,22 @@ def verificar_assinatura(texto: str) -> dict:
     return resultado
 
 
-def processar_pdf(caminho_pdf: str) -> dict:
+def processar_pdf(caminho_pdf: str, campos_procurados: list = None) -> dict:
+    """
+    `campos_procurados` permite passar uma lista de campos específica
+    (ex.: a combinação fluxo+documento decidida em main.py/doc_types.py)
+    em vez da lista fixa CAMPOS_PROCURADOS. Se omitido, usa a lista fixa
+    (mantém o comportamento antigo para quem chama/roda este arquivo
+    isoladamente).
+    """
+    if campos_procurados is None:
+        campos_procurados = CAMPOS_PROCURADOS
+
     texto = extrair_texto(caminho_pdf)
     tabelas = extrair_tabelas(caminho_pdf)
 
     resultado = {}
-    for campo in CAMPOS_PROCURADOS:
+    for campo in campos_procurados:
         valor = buscar_em_tabelas(tabelas, campo)
         if not valor:
             valor = buscar_em_texto(texto, campo)

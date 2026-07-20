@@ -61,7 +61,7 @@ def valor_vazio(valor) -> bool:
 # ---------------------------------------------------------------------------
 # Localização da tabela dentro da planilha
 # ---------------------------------------------------------------------------
-def encontrar_linha_cabecalho(ws):
+def encontrar_linha_cabecalho(ws, campos_procurados):
     """
     Percorre as linhas da planilha e devolve a que mais parece um cabeçalho
     de tabela: linha com várias células de texto que batem (aproximadamente)
@@ -77,7 +77,7 @@ def encontrar_linha_cabecalho(ws):
         pontuacao = sum(
             1
             for celula in celulas_texto
-            for campo in CAMPOS_PROCURADOS
+            for campo in campos_procurados
             if parecido(celula.value, campo)
         )
         if pontuacao > melhor_pontuacao:
@@ -149,17 +149,26 @@ def buscar_campo(campo, colunas, linhas_dados):
 # ---------------------------------------------------------------------------
 # Função reutilizável (chamada pelo main.py e também usável via CLI)
 # ---------------------------------------------------------------------------
-def processar_xlsx(caminho_xlsx: str) -> dict:
+def processar_xlsx(caminho_xlsx: str, campos_procurados: list = None) -> dict:
     """
     Analisa a planilha em `caminho_xlsx` e devolve um dicionário
     {campo: lista_de_valores_ou_None}, um valor por linha de dados da tabela
     encontrada na primeira aba onde ela aparecer.
     Lança exceção se o arquivo não puder ser aberto/lido.
+
+    `campos_procurados` permite passar uma lista de campos específica
+    (ex.: a combinação fluxo+documento decidida em main.py/doc_types.py)
+    em vez da lista fixa CAMPOS_PROCURADOS. Se omitido, usa a lista fixa
+    (mantém o comportamento antigo para quem chama/roda este arquivo
+    isoladamente).
     """
+    if campos_procurados is None:
+        campos_procurados = CAMPOS_PROCURADOS
+
     wb = openpyxl.load_workbook(caminho_xlsx, data_only=True)
 
     for ws in wb.worksheets:
-        linha_cabecalho, pontuacao = encontrar_linha_cabecalho(ws)
+        linha_cabecalho, pontuacao = encontrar_linha_cabecalho(ws, campos_procurados)
         if not linha_cabecalho or pontuacao == 0:
             continue  # esta aba não parece ter a tabela procurada
 
@@ -171,12 +180,30 @@ def processar_xlsx(caminho_xlsx: str) -> dict:
             "_linha_cabecalho": linha_cabecalho[0].row,
             "_num_linhas_dados": len(linhas_dados),
         }
-        for campo in CAMPOS_PROCURADOS:
+        for campo in campos_procurados:
             resultado[campo] = buscar_campo(campo, colunas, linhas_dados)
 
         return resultado
 
     return None  # nenhuma tabela reconhecível em nenhuma aba
+
+
+def extrair_texto_xlsx(caminho_xlsx: str) -> str:
+    """
+    Concatena o conteúdo textual da planilha (nomes das abas + valores de
+    texto de todas as células) em uma única string. Usado por
+    doc_types.identificar_documento() para reconhecer o tipo de documento
+    pelo conteúdo, do mesmo jeito que pdfs.extrair_texto() faz para PDFs.
+    """
+    partes = []
+    wb = openpyxl.load_workbook(caminho_xlsx, data_only=True)
+    for ws in wb.worksheets:
+        partes.append(ws.title)
+        for linha in ws.iter_rows():
+            for celula in linha:
+                if isinstance(celula.value, str) and celula.value.strip():
+                    partes.append(celula.value.strip())
+    return "\n".join(partes)
 
 
 def imprimir_resultado(caminho_xlsx: str, resultado: dict) -> None:
@@ -189,8 +216,9 @@ def imprimir_resultado(caminho_xlsx: str, resultado: dict) -> None:
     print(f"[Aba: {resultado['_aba']}] tabela encontrada na linha {resultado['_linha_cabecalho']}, "
           f"{resultado['_num_linhas_dados']} linha(s) de dados.\n")
 
-    for campo in CAMPOS_PROCURADOS:
-        valores = resultado.get(campo)
+    for campo, valores in resultado.items():
+        if campo.startswith("_"):
+            continue
         if valores is None:
             print(f"[ERRO] Não foi possível encontrar o campo '{campo}' na planilha.")
         elif len(valores) == 1:
