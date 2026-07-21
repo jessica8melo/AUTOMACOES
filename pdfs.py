@@ -239,6 +239,24 @@ PADROES_ESPECIAIS = {
         r"OC\s*Master\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)",
         r"\bOC\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)",
     ],
+    # A modalidade não aparece como rótulo "Tipo de Contratação: ..." — ela
+    # é o próprio cabeçalho repetido em toda página (ex.: "LICITAÇÃO
+    # ELETRÔNICA Nº 2022/04"). Captura só o nome da modalidade, sem o
+    # número, mesmo que ele venha logo depois no texto.
+    "Tipo de Contratação": [
+        r"\b(LICITA[ÇC][ÃA]O\s+ELETR[ÔO]NICA|LICITA[ÇC][ÃA]O\s+PRESENCIAL"
+        r"|PREG[ÃA]O\s+ELETR[ÔO]NICO|PREG[ÃA]O\s+PRESENCIAL"
+        r"|DISPENSA\s+DE\s+LICITA[ÇC][ÃA]O|INEXIGIBILIDADE\s+DE\s+LICITA[ÇC][ÃA]O"
+        r"|CONCORR[ÊE]NCIA|TOMADA\s+DE\s+PRE[ÇC]OS|CONVITE"
+        r"|CONTRATA[ÇC][ÃA]O\s+DIRETA|ATA\s+DE\s+REGISTRO\s+DE\s+PRE[ÇC]OS)\b",
+    ],
+    # O contrato sempre cita 2 CNPJs (CONTRATANTE e CONTRATADA), na mesma
+    # frase de qualificação das partes: "... inscrita no CNPJ nº
+    # XX.XXX.XXX/XXXX-XX, denominada CONTRATADA". Interessa sempre o da
+    # CONTRATADA (o fornecedor), nunca o da CONTRATANTE (BB Tecnologia).
+    "CNPJ": [
+        r"CNPJ\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)\s*,?\s*denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
+    ],
 }
 
 

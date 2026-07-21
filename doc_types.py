@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-Identifica QUAL documento do checklist um arquivo representa (Contrato,
-Nota Técnica, ACC Master, FQ415-075 etc.), usando marcadores no nome do
-arquivo e no texto do seu conteúdo.
+Identifica QUAL documento um arquivo representa (Contrato, Nota Técnica,
+FQ415-075, Projeto Básico, Solicitação de Entrega etc.), usando
+marcadores no nome do arquivo e no texto do seu conteúdo.
 
-Este módulo não decide QUAL fluxo está em jogo — isso é escolhido antes,
-em main.py. Aqui só respondemos: "dentre os documentos que ESSE fluxo
-espera (fluxos.documentos_do_fluxo), qual deles é este arquivo?".
+Este módulo não define a lista de documentos reconhecidos nem seus
+campos — isso está em documentos.py. Aqui só respondemos: "dentre os
+documentos passados em `candidatos` (normalmente
+documentos.listar_documentos()), qual deles é este arquivo?".
 
 Cada categoria de documento tem:
   - "aliases": as chaves usadas em fluxos.FLUXOS que se referem a ela

@@ -10,11 +10,24 @@ Clicksign, Aprovve).
 
 ## Como funciona
 
+> **Nota:** por enquanto o projeto foca só na **extração de dados dos
+> documentos**. A parte de fluxos/checklists (`fluxos.py`) fica pausada
+> para depois — o `main.py` não pergunta mais qual fluxo está sendo
+> aplicado, ele identifica o documento e extrai seus campos direto.
+
 - **`main.py`** — ponto de entrada. Recebe o caminho de um arquivo (ou de uma
-  pasta) e identifica o tipo real do arquivo pelos bytes iniciais (não só
-  pela extensão), encaminhando para o script certo:
+  pasta), identifica o tipo real do arquivo pelos bytes iniciais (não só
+  pela extensão) e qual DOCUMENTO ele é (Contrato, FQ415-075, Nota
+  Técnica, Projeto Básico, Solicitação de Entrega — ver `documentos.py`),
+  usando `doc_types.py`. Em seguida busca só os campos daquele documento
+  e encaminha para o script certo:
   - PDF → `pdfs.py`
   - XLSX/XLSM/XLS → `tabelas.py`
+- **`documentos.py`** — lista os documentos reconhecidos e, para cada um,
+  os campos que devem ser extraídos. É o único lugar que você precisa
+  editar para adicionar/remover/renomear campos de um documento.
+- **`doc_types.py`** — identifica qual documento um arquivo representa,
+  combinando indícios do nome do arquivo com indícios do texto/conteúdo.
 - **`pdfs.py`** — abre o PDF com `pdfplumber`, extrai texto e tabelas, e
   procura os campos definidos em `CAMPOS_PROCURADOS` dentro do arquivo.
   Quando uma página não tem texto extraível (ex.: certificados de assinatura
@@ -108,11 +121,14 @@ Documento analisado: Anexos/DGCO_Nº_027322025.pdf
 
 ## Customizando os campos procurados
 
-Cada script tem sua própria lista `CAMPOS_PROCURADOS` no topo do arquivo —
-edite livremente para adicionar, remover ou renomear campos:
+Os campos de cada documento ficam em `documentos.py` (dicionário
+`DOCUMENTOS`) — edite livremente para adicionar, remover ou renomear
+campos de qualquer um dos 5 documentos reconhecidos (Contrato,
+FQ415-075, Nota Técnica, Projeto Básico, Solicitação de Entrega).
 
-- `pdfs.py` → campos de contratos/aditivos/solicitações em PDF
-- `tabelas.py` → colunas de planilhas de custos/formação de preços
+`pdfs.py` e `tabelas.py` também têm sua própria lista `CAMPOS_PROCURADOS`
+no topo do arquivo, usada só quando você roda um deles isoladamente (sem
+passar pelo `main.py`) — ver seção anterior.
 
 Para PDFs, alguns campos que não aparecem como "Rótulo: valor" (como "DGCO
 nº", "OC Master nº" e "Data do fornecimento") usam expressões regulares
