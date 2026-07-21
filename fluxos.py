@@ -23,7 +23,8 @@ ASSINATURAS_PREFIXO = "ASSINATURAS:"
 
 FLUXOS = {
     "FQ412-033": {
-        "nome": "Liberação de Acordo em Aberto",
+        "nome": "Liberação de Acordo de Compra em Aberto",
+        # Conferir vigência do contrato no SISCON
         "documentos": {
             "Solicitação de Entrega": [
                 "Valor total da solicitação",   # Total
@@ -49,6 +50,40 @@ FLUXOS = {
             ],
             "FQ412-035": [
                 f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
+            ],
+        },
+    },
+    "FQ412-043": {
+        "nome": "Liberação de Acordo de Compra do Contrato",
+                                                # Conferir se foi criada ordem de compra no tipo padrão
+        "documentos": {
+            "Contrato": [
+                "Contratante",                  # Fornecedor
+                "DGCO",
+                "Pagamento",
+                "Tipo",
+                "Data",
+            ],
+            "ACC Master": [
+                "Local",                        # Local
+                "Excede",
+                "Número da OC Master",
+            ],
+            "FQ415-075": [
+                "Local para Faturamento",       # Entregar Para/Faturar Para/Modalida
+                "Natureza da Transação",
+                "Unidade de Medida",            # UDM
+                "Valor/Preço Unitário",         # Preço
+            ],
+            "FQ412-034": [
+                "Valor total",                  # Total
+            ],
+            "Nota Técnica": [
+                "Número da Nota Técnica",
+                "Conta de Débito",
+            ],
+            "Solicitação de Entrega": [
+                "Entrega Para",
             ],
         },
     },
@@ -129,34 +164,6 @@ FLUXOS = {
             ],
             "FQ415-075": [
                 f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
-            ],
-        },
-    },
-    "FQ412-043": {
-        "nome": "Liberação de Acordo do Contrato",
-        "documentos": {
-            "ACC Master": [
-                "Local",
-                "Excede",
-                "Número da OC Master",
-            ],
-            "Contrato": [
-                "Fornecedor",
-                "Descrição",
-                "Pagamento",
-                "Tipo",
-            ],
-            "FQ415-075": [
-                "Faturar Para",
-                "Entrega Para",
-                "Natureza da Transação",
-            ],
-            "Nota Técnica": [
-                "Número da Nota Técnica",
-                "Conta de Débito",
-            ],
-            "Solicitação de Entrega": [
-                "Entrega Para",
             ],
         },
     },
