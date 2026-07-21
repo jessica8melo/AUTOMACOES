@@ -22,16 +22,44 @@ Convenção especial:
 ASSINATURAS_PREFIXO = "ASSINATURAS:"
 
 FLUXOS = {
+    "FQ412-033": {
+        "nome": "Liberação de Acordo em Aberto",
+        "documentos": {
+            "Solicitação de Entrega": [
+                "Valor total da solicitação",   # Total
+                "Endereço",                     # Entregar Para
+                "Quantidade",                   # Quantidade
+                "Data do fornecimento",         # Prometido
+                "Código BBTS",                  # Código
+                "Especificação do Bem",         # Nome
+
+                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
+            ],
+            "FQ415-075": [                      # Conta de Débito
+                "UOR",
+                "Conta Contábil",
+            ],
+            "Nota Técnica": [
+                "Conta de Débito",
+
+                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
+            ],
+            "FQ412-034": [
+                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
+            ],
+            "FQ412-035": [
+                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
+            ],
+        },
+    },
     "FQ415-031": {
         "nome": "OC Padrão – Com Contrato",
         "documentos": {
             "Contrato / Aditivo": [
-                "Fornecedor",
-                "Local",
-                "Descrição",
-                "Total",
-                "DGCO Fornecedor SICON_GESCON",
-                "Modalidade de Contratação",
+                "Contratada",   # Fornecedor
+                "Sede na cidade de",    #Entregar Para
+                "DGCO",
+                "Modalidade de Contratação", #Modalidade de Contratação
                 "Tipo",
                 "UDM",
                 "Preço",
@@ -154,28 +182,6 @@ FLUXOS = {
             "Documento de Referência da Área": [
                 "Org",
                 "Entregar Para",
-            ],
-        },
-    },
-    "FQ412-033": {
-        "nome": "Liberação de Acordo em Aberto",
-        "documentos": {
-            "Solicitação de Entrega": [
-                "Contrato vigente",
-                "Total",
-                "Entrega Para",
-                "Quantidade",
-                "Prometido",
-                "Código",
-            ],
-            "Nota Técnica": [
-                "Conta de Débito",
-            ],
-            "FQ412-034": [
-                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
-            ],
-            "FQ412-035": [
-                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
             ],
         },
     },

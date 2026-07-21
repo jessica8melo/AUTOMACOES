@@ -2,8 +2,7 @@
 """
 Ponto de entrada único.
 
-Diferente da versão anterior (que só olhava a extensão do arquivo e usava
-uma lista única e fixa de campos para qualquer PDF/planilha), este script:
+Etapas do script:
 
     1. Pergunta/recebe qual dos fluxos (checklists) de fluxos.py está
        sendo aplicado (ex.: FQ415-031 - OC Padrão com Contrato).
