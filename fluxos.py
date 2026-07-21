@@ -21,6 +21,57 @@ Convenção especial:
 
 ASSINATURAS_PREFIXO = "ASSINATURAS:"
 
+DOCUMENTOS = {
+    "Contrato": [
+        "DGCO",
+        "OC Master",
+        "Tipo de Contratação",
+        "Contratante",                  # Fornecedor
+        "CNPJ",
+        "Quantidade",
+        "Preço unitário",
+        "Valor total",
+        "Pagamento",
+    ],
+    "FQ415-075": [
+        "Código do Item",
+        "Descrição do Item",
+        "Unidade de Medida",            # UDM
+        "Quantidade do Item",           # Quantidade
+        "Valor/Preço Unitário",         # Preço
+        "Valor Total",                  # Total
+        "Natureza da Transação",        # Natureza da Transação
+        "Local para Faturamento",       # Entregar Para/Faturar Para/Modalida
+        "UOR",                          # Conta de Débito  
+        "Conta Contábil",
+    ],
+    "Nota Técnica": [
+        "Número da Nota Técnica",
+        "UOR",
+    ],
+    "Projeto Básico": [
+        "Codigo do Item",
+        "Descrição do Item",
+        "Natureza da transação",
+        "Natureza contábil",
+        "Conta contábil de despesa ou investimento",
+        "UOR",
+        "CNPJ de faturamento",
+        "Condições de Garantia e Assistência Técnica, Manutenção e Suporte Técnico",
+        "Condições de Pagamento",       # dias corridos
+    ],
+    "Solicitação de Entrega": [
+        "DGCO",
+        "OC Master",
+        "Valor total da solicitação",   # Total
+        "Endereço",                     # Entregar Para
+        "Quantidade",                   # Quantidade
+        "Data do fornecimento",         # Prometido
+        "Código BBTS",                  # Código
+        "Especificação do Bem",         # Nome
+    ],
+}
+
 FLUXOS = {
     "FQ412-033": {
         "nome": "Liberação de Acordo de Compra em Aberto",
@@ -70,10 +121,16 @@ FLUXOS = {
                 "Número da OC Master",
             ],
             "FQ415-075": [
-                "Local para Faturamento",       # Entregar Para/Faturar Para/Modalida
-                "Natureza da Transação",
+                "Código do Item",
+                "Descrição do Item",
                 "Unidade de Medida",            # UDM
+                "Quantidade do Item",
                 "Valor/Preço Unitário",         # Preço
+                "Valor Total",
+                "Natureza da Transação",
+                "Local para Faturamento",       # Entregar Para/Faturar Para/Modalida
+                "UOR",                          # Conta de Débito  
+                "Conta Contábil",
             ],
             "FQ412-034": [
                 "Valor total",                  # Total
