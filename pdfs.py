@@ -105,11 +105,33 @@ def ocr_pagina(pagina, resolucao: int = 200) -> str:
     return ""
 
 
+def _nao_eh_marca_dagua(obj) -> bool:
+    """
+    Usado em pagina.filter(...) para IGNORAR a marca d'água diagonal de
+    rastreamento (ex.: e-mail de quem baixou o PDF + data/hora, repetida
+    várias vezes na página, levemente rotacionada). Ela é impressa num
+    cinza bem claro (quase branco) e seus caracteres acabam entrelaçados
+    com o texto real na mesma região, embaralhando a extração (ex.:
+    "Nota Técnica - 2022/0263" saindo como "m/-/1/2/9a/0/...").
+
+    Devolve True para manter o objeto (texto normal) e False para
+    descartá-lo (marca d'água). Só mexe em caracteres — outros objetos
+    (linhas, retângulos, imagens) passam direto.
+    """
+    if obj.get("object_type") != "char":
+        return True
+    cor = obj.get("non_stroking_color")
+    if not isinstance(cor, (tuple, list)) or len(cor) < 3:
+        return True
+    return not all(abs(c - 0.85882) < 0.02 for c in cor[:3])
+
+
 def extrair_texto(caminho_pdf: str) -> str:
     partes = []
     with pdfplumber.open(caminho_pdf) as pdf:
         for pagina in pdf.pages:
-            texto_pagina = pagina.extract_text(layout=True) or ""
+            pagina_limpa = pagina.filter(_nao_eh_marca_dagua)
+            texto_pagina = pagina_limpa.extract_text(layout=True) or ""
             if len(texto_pagina.strip()) < 200 and pagina.images:
                 texto_ocr = ocr_pagina(pagina)
                 if texto_ocr:
@@ -256,6 +278,10 @@ PADROES_ESPECIAIS = {
     # CONTRATADA (o fornecedor), nunca o da CONTRATANTE (BB Tecnologia).
     "CNPJ": [
         r"CNPJ\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)\s*,?\s*denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
+    ],
+    # Aparece como cabeçalho no topo do documento: "Nota Técnica - 2022/0263"
+    "Número da Nota Técnica": [
+        r"Nota\s+T[ée]cnica\s*[-–]\s*(\d{4}\s*/\s*\d+)",
     ],
 }
 

@@ -41,7 +41,6 @@ DOCUMENTOS = {
     ],
     "Nota Técnica": [
         "Número da Nota Técnica",
-        "UOR",
     ],
     "Projeto Básico": [
         "Codigo do Item",
