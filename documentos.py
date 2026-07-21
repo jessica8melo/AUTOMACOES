@@ -16,7 +16,7 @@ livremente o dicionário abaixo.
 """
 
 DOCUMENTOS = {
-    "Contrato": [
+    "Contrato / Aditivo": [
         "DGCO",
         "OC Master",
         "Tipo de Contratação",

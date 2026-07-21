@@ -147,6 +147,41 @@ def buscar_campo(campo, colunas, linhas_dados):
 
 
 # ---------------------------------------------------------------------------
+# Pós-processamento específico de alguns campos: a célula tem mais texto do
+# que o valor que interessa, então depois de achar a coluna certa a gente
+# ainda recorta o valor final.
+# ---------------------------------------------------------------------------
+def _extrair_sigla_entre_parenteses(valor):
+    """
+    'Local para Faturamento' vem como 'BRASILIA - MANUTENCAO BRA(M)', mas só
+    interessa a sigla final entre parênteses, ex.: 'BRA(M)'. Pega o último
+    token colado a um '(...)' no fim do texto; se não achar esse padrão,
+    devolve o valor original (sem quebrar quando o formato for diferente).
+    """
+    if not isinstance(valor, str):
+        return valor
+    match = re.search(r"(\S+\([^)]+\))\s*$", valor)
+    return match.group(1) if match else valor
+
+
+PROCESSAMENTO_ESPECIAL = {
+    "Local para Faturamento": _extrair_sigla_entre_parenteses,
+}
+
+
+def aplicar_processamento_especial(campo, valores):
+    """Se `campo` bater (aproximadamente) com uma chave de
+    PROCESSAMENTO_ESPECIAL, aplica a função de recorte em cada valor da
+    lista. Caso contrário, devolve os valores como vieram da planilha."""
+    if valores is None:
+        return None
+    for chave, funcao in PROCESSAMENTO_ESPECIAL.items():
+        if parecido(chave, campo):
+            return [funcao(v) if v is not None else v for v in valores]
+    return valores
+
+
+# ---------------------------------------------------------------------------
 # Função reutilizável (chamada pelo main.py e também usável via CLI)
 # ---------------------------------------------------------------------------
 def processar_xlsx(caminho_xlsx: str, campos_procurados: list = None) -> dict:
@@ -181,7 +216,8 @@ def processar_xlsx(caminho_xlsx: str, campos_procurados: list = None) -> dict:
             "_num_linhas_dados": len(linhas_dados),
         }
         for campo in campos_procurados:
-            resultado[campo] = buscar_campo(campo, colunas, linhas_dados)
+            valores = buscar_campo(campo, colunas, linhas_dados)
+            resultado[campo] = aplicar_processamento_especial(campo, valores)
 
         return resultado
 
