@@ -252,7 +252,19 @@ def buscar_em_tabelas(tabelas, campo: str):
 def buscar_em_texto(texto: str, campo: str):
     campo_escapado = re.escape(campo)
 
-    padrao_mesma_linha = re.compile(rf"{campo_escapado}\s*[:\-]\s*(.+)", re.IGNORECASE)
+    # IMPORTANTE: o valor de um campo às vezes quebra de linha no meio da
+    # extração do PDF (ex.: "...Suporte Técnico: não se\n      aplica."),
+    # porque pdfplumber preserva o layout visual da página. Sem DOTALL, "."
+    # não cruza "\n" e o valor saía cortado ("não se", perdendo "aplica.").
+    # Por isso agora o valor pode continuar por mais linhas, mas para no
+    # primeiro sinal claro de que acabou: uma linha em branco, ou o início
+    # do próximo item numerado (ex.: "9.", "10.1", "2.3.2.1.4.2"), ou o fim
+    # do texto — o que vier primeiro.
+    padrao_mesma_linha = re.compile(
+        rf"{campo_escapado}\s*[:\-]\s*(.+?)"
+        rf"(?=\n\s*\n|\n\s*\d+(?:\.\d+)*[\.\)]|\n\s*[A-ZÀ-Ý][^\n:]{{0,80}}:|\Z)",
+        re.IGNORECASE | re.DOTALL,
+    )
     match = padrao_mesma_linha.search(texto)
     if match:
         valor = match.group(1).strip()
