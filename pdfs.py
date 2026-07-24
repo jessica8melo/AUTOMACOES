@@ -55,11 +55,22 @@ def normalizar(texto: str) -> str:
 
 
 def parecido(a: str, b: str, limite: float = 0.72) -> bool:
-    """Compara dois textos de forma tolerante a pequenas variações de escrita."""
+    """Compara dois textos de forma tolerante a pequenas variações de escrita.
+
+    IMPORTANTE: a checagem "um texto está contido no outro" só vale para
+    textos com pelo menos 4 caracteres normalizados. Sem esse piso, uma
+    célula de tabela de 1-2 letras (lixo comum de PDF, ex.: 'o', 'no', 'c',
+    restos de "...de sobre-aviso") acaba "contida" em QUALQUER campo mais
+    longo (ex.: "Número da Nota Técnica" contém a letra 'o'), fazendo o
+    campo casar com a célula errada. Textos curtos só contam como iguais
+    se forem EXATAMENTE iguais (primeira checagem abaixo).
+    """
     na, nb = normalizar(a), normalizar(b)
     if not na or not nb:
         return False
-    if na == nb or na in nb or nb in na:
+    if na == nb:
+        return True
+    if min(len(na), len(nb)) >= 4 and (na in nb or nb in na):
         return True
     return SequenceMatcher(None, na, nb).ratio() >= limite
 
