@@ -57,21 +57,32 @@ def normalizar(texto: str) -> str:
 def parecido(a: str, b: str, limite: float = 0.72) -> bool:
     """Compara dois textos de forma tolerante a pequenas variações de escrita.
 
-    IMPORTANTE: a checagem "um texto está contido no outro" só vale para
+    IMPORTANTE (1): a checagem "um texto está contido no outro" só vale para
     textos com pelo menos 4 caracteres normalizados. Sem esse piso, uma
     célula de tabela de 1-2 letras (lixo comum de PDF, ex.: 'o', 'no', 'c',
     restos de "...de sobre-aviso") acaba "contida" em QUALQUER campo mais
     longo (ex.: "Número da Nota Técnica" contém a letra 'o'), fazendo o
-    campo casar com a célula errada. Textos curtos só contam como iguais
-    se forem EXATAMENTE iguais (primeira checagem abaixo).
+    campo casar com a célula errada.
+
+    IMPORTANTE (2): mesmo com 4+ caracteres, uma palavra genérica de uma
+    tabela qualquer (ex.: cabeçalho "ITEM" de uma tabela de multas, numerando
+    infrações 1-5) NÃO deve "vencer" só por estar contida em um campo
+    composto e bem mais específico como "Código do Item" ou "Descrição do
+    Item" — ela poderia estar contida em qualquer campo que mencione "item"
+    em outro contexto qualquer. Por isso a inclusão só conta quando o texto
+    curto tem 2+ palavras (é um rótulo, não uma palavra solta) OU cobre pelo
+    menos metade do comprimento do texto longo (não é um fragmento pequeno
+    perdido dentro de um rótulo bem maior).
     """
     na, nb = normalizar(a), normalizar(b)
     if not na or not nb:
         return False
     if na == nb:
         return True
-    if min(len(na), len(nb)) >= 4 and (na in nb or nb in na):
-        return True
+    curto, longo = (na, nb) if len(na) <= len(nb) else (nb, na)
+    if len(curto) >= 4 and curto in longo:
+        if len(curto.split()) >= 2 or len(curto) / len(longo) >= 0.5:
+            return True
     return SequenceMatcher(None, na, nb).ratio() >= limite
 
 

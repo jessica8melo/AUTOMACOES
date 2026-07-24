@@ -47,17 +47,24 @@ def normalizar(texto: str) -> str:
 def parecido(a: str, b: str, limite: float = 0.72) -> bool:
     """Compara dois textos de forma tolerante a pequenas variações de escrita.
 
-    Mesma correção de pdfs.py: "contém" só conta para textos com pelo menos
-    4 caracteres normalizados, para não deixar células de 1-2 letras
-    (lixo comum de planilha/PDF) casarem com qualquer campo mais longo.
+    Mesma correção de pdfs.py:
+    (1) "contém" só conta para textos com pelo menos 4 caracteres normalizados,
+        para não deixar células de 1-2 letras (lixo comum de planilha/PDF)
+        casarem com qualquer campo mais longo.
+    (2) mesmo com 4+ caracteres, uma palavra genérica de cabeçalho de coluna
+        (ex.: "ITEM") não deve vencer só por estar contida em um campo
+        composto bem mais específico (ex.: "Código do Item") — só conta se o
+        texto curto tiver 2+ palavras ou cobrir metade do texto longo.
     """
     na, nb = normalizar(a), normalizar(b)
     if not na or not nb:
         return False
     if na == nb:
         return True
-    if min(len(na), len(nb)) >= 4 and (na in nb or nb in na):
-        return True
+    curto, longo = (na, nb) if len(na) <= len(nb) else (nb, na)
+    if len(curto) >= 4 and curto in longo:
+        if len(curto.split()) >= 2 or len(curto) / len(longo) >= 0.5:
+            return True
     return SequenceMatcher(None, na, nb).ratio() >= limite
 
 
