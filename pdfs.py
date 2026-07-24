@@ -317,6 +317,32 @@ PADROES_ESPECIAIS = {
     "Número da Nota Técnica": [
         r"Nota\s+T[ée]cnica\s*[-–]\s*(\d{4}\s*/\s*\d+)",
     ],
+    # O campo "Condições de Pagamento" não deve trazer o parágrafo inteiro
+    # do item "10. Condições de Pagamento" (que normalmente só descreve o
+    # rito/gatilho do pagamento, ex.: "ao final de cada etapa"). O que
+    # interessa é o PRAZO em dias corridos citado em algum ponto do texto
+    # próximo à palavra "pagamento" (ex.: "...será realizado em até 30
+    # (trinta) dias corridos..." ou "...em 30 (trinta) dias corridos, a
+    # contar da emissão da Nota Fiscal..."). Por isso este campo tem
+    # prioridade especial (ver CAMPOS_PRIORIDADE_ESPECIAL) e busca
+    # diretamente por esse trecho, em vez do rótulo "Condições de
+    # Pagamento:" seguido do parágrafo genérico.
+    "Condições de Pagamento": [
+        r"pagament\w*.{0,250}?\bem\s+(?:at[ée]\s+)?(\d+\s*(?:\([^)]*\))?\s*dias\s+corridos)",
+        r"(\d+\s*(?:\([^)]*\))?\s*dias\s+corridos)(?=.{0,150}?(?:emiss[ãa]o\s+da\s+nota\s+fiscal|conclus[ãa]o\s+d[eas]))",
+    ],
+}
+
+# Campos cuja busca via padrão especial (regex) deve ter PRIORIDADE sobre a
+# busca genérica de tabela/"rótulo: valor". Normalmente os padrões especiais
+# só entram como último recurso (quando tabela e texto genérico falham),
+# mas para estes campos a busca genérica encontraria algo tecnicamente
+# "correto" — um trecho de texto que realmente segue o rótulo — só que não
+# é o valor que interessa (ex.: "Condições de Pagamento" tem um parágrafo
+# de regras logo após o rótulo, mas o que se quer é o prazo em dias
+# corridos, que pode estar em outro parágrafo do documento).
+CAMPOS_PRIORIDADE_ESPECIAL = {
+    "Condições de Pagamento",
 }
 
 
@@ -441,7 +467,16 @@ def processar_pdf(caminho_pdf: str, campos_procurados: list = None) -> dict:
 
     resultado = {}
     for campo in campos_procurados:
-        valor = buscar_em_tabelas(tabelas, campo)
+        prioridade_especial = any(
+            parecido(campo, c) for c in CAMPOS_PRIORIDADE_ESPECIAL
+        )
+
+        valor = None
+        if prioridade_especial:
+            valor = buscar_com_padroes_especiais(texto, campo)
+
+        if not valor:
+            valor = buscar_em_tabelas(tabelas, campo)
         if not valor:
             valor = buscar_em_texto(texto, campo)
         if not valor:
