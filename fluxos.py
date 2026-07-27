@@ -3,206 +3,96 @@
 Definição dos fluxos (checklists) de conferência de documentos.
 
 Cada fluxo representa um tipo de processo (ex.: FQ415-031 - OC Padrão com
-Contrato). Dentro de cada fluxo, cada "documento" é um tipo de arquivo que
-deve ser conferido (Contrato, Nota Técnica, FQ415-075, etc.), e para cada
-documento há uma lista de campos que devem ser localizados e conferidos.
+Contrato). Dentro de cada fluxo, listamos apenas os NOMES dos documentos
+que fazem parte do checklist — os campos a conferir de cada documento não
+são mais duplicados aqui: eles vêm de documentos.py, que é o ponto único
+de configuração da etapa de extração.
 
-Esse módulo é só dados: quem decide QUAL fluxo está sendo aplicado e QUAL
-documento cada arquivo representa é o main.py (com ajuda de doc_types.py).
-Só depois dessas duas decisões é que os campos daqui são usados para buscar
-informação dentro do arquivo.
+Se um documento do fluxo não existir em documentos.py (ex.: "FQ412-034",
+"Ata do Condomínio"), significa que ele não tem campos a extrair — nesse
+caso o único item do checklist passa a ser, automaticamente, a conferência
+de assinaturas.
 
 Convenção especial:
-    Alguns itens do checklist não são "campos" a extrair, e sim conferências
-    de assinatura (ex.: "Conferir assinaturas de todos os documentos"). Esses
-    itens são marcados com o prefixo "ASSINATURAS:" e são tratados à parte
+    Itens de checklist que são conferências de assinatura (e não campos a
+    extrair) usam o prefixo "ASSINATURAS:" (ex.: "ASSINATURAS: Conferir
+    assinaturas de todos os documentos"). Esses itens são tratados à parte
     (usam o verificador de assinatura de pdfs.py em vez de busca de campo).
 """
 
-ASSINATURAS_PREFIXO = "ASSINATURAS:"
+import documentos
 
-# Os documentos reconhecidos e seus campos a extrair agora moram em
-# documentos.py (módulo único usado pela etapa de extração, independente
-# de fluxo). Este arquivo fica pausado por enquanto — ver aviso no
-# main.py — e volta a ser usado quando a parte dos fluxos for retomada.
+ASSINATURAS_PREFIXO = "ASSINATURAS:"
+ITEM_ASSINATURA_PADRAO = f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos"
 
 FLUXOS = {
     "FQ412-033": {
         "nome": "Liberação de Acordo de Compra em Aberto",
         # Conferir vigência do contrato no SISCON
-        "documentos": {
-            "Solicitação de Entrega": [
-                "Valor total da solicitação",   # Total
-                "Endereço",                     # Entregar Para
-                "Quantidade",                   # Quantidade
-                "Data do fornecimento",         # Prometido
-                "Código BBTS",                  # Código
-                "Especificação do Bem",         # Nome
-
-                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
-            ],
-            "FQ415-075": [                      # Conta de Débito
-                "UOR",
-                "Conta Contábil",
-            ],
-            "Nota Técnica": [
-                "Conta de Débito",
-
-                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
-            ],
-            "FQ412-034": [
-                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
-            ],
-            "FQ412-035": [
-                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
-            ],
-        },
+        "documentos": [
+            "Solicitação de Entrega",
+            "FQ415-075",
+            "Nota Técnica",
+            "FQ412-034",
+            "FQ412-035",
+        ],
     },
     "FQ412-043": {
         "nome": "Liberação de Acordo de Compra do Contrato",
-                                                # Conferir se foi criada ordem de compra no tipo padrão
-        "documentos": {
-            "Contrato": [
-                "Contratante",                  # Fornecedor
-                "DGCO",
-                "Pagamento",
-                "Tipo",
-                "Data",
-            ],
-            "ACC Master": [
-                "Local",                        # Local
-                "Excede",
-                "Número da OC Master",
-            ],
-            "FQ415-075": [
-                "Código do Item",
-                "Descrição do Item",
-                "Unidade de Medida",            # UDM
-                "Quantidade do Item",
-                "Valor/Preço Unitário",         # Preço
-                "Valor Total",
-                "Natureza da Transação",
-                "Local para Faturamento",       # Entregar Para/Faturar Para/Modalida
-                "UOR",                          # Conta de Débito  
-                "Conta Contábil",
-            ],
-            "FQ412-034": [
-                "Valor total",                  # Total
-            ],
-            "Nota Técnica": [
-                "Número da Nota Técnica",
-                "Conta de Débito",
-            ],
-            "Solicitação de Entrega": [
-                "Entrega Para",
-            ],
-        },
+        # Conferir se foi criada ordem de compra no tipo padrão
+        "documentos": [
+            "Contrato / Aditivo",
+            "ACC Master",
+            "FQ415-075",
+            "FQ412-034",
+            "Nota Técnica",
+            "Solicitação de Entrega",
+        ],
     },
     "FQ415-031": {
         "nome": "OC Padrão – Com Contrato",
-        "documentos": {
-            "Contrato / Aditivo": [
-                "Contratada",   # Fornecedor
-                "Sede na cidade de",    #Entregar Para
-                "DGCO",
-                "Modalidade de Contratação", #Modalidade de Contratação
-                "Tipo",
-                "UDM",
-                "Preço",
-                "Prometido",
-                "Pagamento",
-            ],
-            "Projeto Básico": [
-                "Pagamento",
-                "Entregar Para",
-                "Conta de Débito",
-            ],
-            "Nota Técnica": [
-                "Número da Nota Técnica",
-                "Conta de Débito",
-            ],
-            "FQ415-075": [
-                "Fornecedor",
-                "Local",
-                "Descrição",
-                "Entregar Para",
-            ],
-        },
+        "documentos": [
+            "Contrato / Aditivo",
+            "Projeto Básico",
+            "Nota Técnica",
+            "FQ415-075",
+        ],
     },
     "FQ415-055": {
         "nome": "Acordo de Compra em Aberto",
-        "documentos": {
-            "Contrato": [
-                "Fornecedor",
-                "Local",
-                "Descrição",
-                "Total",
-                "DGCO Fornecedor SICON_GESCON",
-                "Modalidade de Contratação",
-                "Tipo",
-                "UDM",
-                "Quantidade Acordada",
-                "Quantia Acordada",
-                "Preço",
-                "Pagamento",
-            ],
-            "Nota Técnica": [
-                "Número da Nota Técnica",
-            ],
-            "Projeto Básico": [
-                "Pagamento",
-            ],
-            "FQ415-075": [
-                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
-            ],
-        },
+        "documentos": [
+            "Contrato / Aditivo",
+            "Nota Técnica",
+            "Projeto Básico",
+            "FQ415-075",
+        ],
     },
     "FQ415-084": {
         "nome": "Acordo de Compra do Contrato",
-        "documentos": {
-            "Contrato": [
-                "Fornecedor",
-                "Local",
-                "Descrição",
-                "Total",
-                "Modalidade de Contratação",
-                "Pagamento",
-                "Frete",
-                "FOB",
-            ],
-            "Nota Técnica": [
-                "Número da Nota Técnica",
-            ],
-            "FQ415-075": [
-                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
-            ],
-        },
+        "documentos": [
+            "Contrato / Aditivo",
+            "Nota Técnica",
+            "FQ415-075",
+        ],
     },
     "FQ412-069": {
         "nome": "Condomínio",
-        "documentos": {
-            "Contrato / Aditivo": [
-                "Modalidade de Contratação",
-                "Pagamento",
-            ],
-            "Ata do Condomínio": [
-                f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos",
-            ],
-            "Boleto do Condomínio": [
-                "Fornecedor",
-                "Local",
-                "Valor",
-            ],
-            "Nota Técnica": [
-                "Número da Nota Técnica",
-                "Conta de Débito",
-            ],
-            "Documento de Referência da Área": [
-                "Org",
-                "Entregar Para",
+        "documentos": [
+            "Contrato / Aditivo",
+            "Ata do Condomínio",
+            "Boleto do Condomínio",
+            "Nota Técnica",
+            "Documento de Referência da Área",
+        ],
+    },
+    "FQ412-067": {
+            "nome": "Licitação",
+            "documentos": [
+                "Contrato / Aditivo",
+                "Nota Técnica",
+                "Projeto Básico",
             ],
         },
-    },
 }
 
 
@@ -211,16 +101,30 @@ def listar_fluxos() -> list:
     return [(fid, dados["nome"]) for fid, dados in FLUXOS.items()]
 
 
-def documentos_do_fluxo(id_fluxo: str) -> dict:
-    """Devolve o dict {documento: [campos]} de um fluxo, ou {} se não existir."""
+def documentos_do_fluxo(id_fluxo: str) -> list:
+    """Devolve a lista de nomes de documentos de um fluxo, ou [] se o
+    fluxo não existir."""
     fluxo = FLUXOS.get(id_fluxo)
-    return fluxo["documentos"] if fluxo else {}
+    return fluxo["documentos"] if fluxo else []
 
 
 def campos_do_documento(id_fluxo: str, tipo_documento: str) -> list:
-    """Devolve a lista de campos/itens de checklist de um documento dentro de
-    um fluxo específico, ou [] se a combinação não existir."""
-    return documentos_do_fluxo(id_fluxo).get(tipo_documento, [])
+    """Devolve a lista de campos/itens de checklist de um documento dentro
+    de um fluxo específico.
+
+    Os campos vêm de documentos.py. Se o documento não fizer parte do
+    fluxo, devolve []. Se fizer parte do fluxo mas não tiver campos
+    cadastrados em documentos.py, devolve só o item de conferência de
+    assinaturas.
+    """
+    if tipo_documento not in documentos_do_fluxo(id_fluxo):
+        return []
+
+    campos = documentos.campos_do_documento(tipo_documento)
+    if campos:
+        return campos
+
+    return [ITEM_ASSINATURA_PADRAO]
 
 
 def eh_item_assinatura(campo: str) -> bool:
