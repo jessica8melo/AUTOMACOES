@@ -113,18 +113,27 @@ def campos_do_documento(id_fluxo: str, tipo_documento: str) -> list:
     de um fluxo específico.
 
     Os campos vêm de documentos.py. Se o documento não fizer parte do
-    fluxo, devolve []. Se fizer parte do fluxo mas não tiver campos
-    cadastrados em documentos.py, devolve só o item de conferência de
-    assinaturas.
+    fluxo, devolve [].
+
+    O item de conferência de assinatura (ITEM_ASSINATURA_PADRAO) é sempre
+    incluído, além dos campos normais — não só quando o documento não tem
+    nenhum campo cadastrado. Assim, TODO documento do checklist (Contrato,
+    Nota Técnica, FQ415-075, Projeto Básico, Solicitação de Entrega etc.)
+    passa pela checagem de assinatura, e não só os que não têm campo
+    nenhum (FQ412-034, FQ412-035, Ata/Boleto do Condomínio). Quem decide
+    se a assinatura É de fato conferível é checklist.py: PDFs são
+    checados de verdade (pdfs.verificar_assinatura); planilhas apenas
+    avisam que a conferência não se aplica e deve ser feita manualmente
+    (ver processar_documento_anexo em checklist.py).
     """
     if tipo_documento not in documentos_do_fluxo(id_fluxo):
         return []
 
-    campos = documentos.campos_do_documento(tipo_documento)
-    if campos:
-        return campos
+    campos = list(documentos.campos_do_documento(tipo_documento))
+    if ITEM_ASSINATURA_PADRAO not in campos:
+        campos.append(ITEM_ASSINATURA_PADRAO)
 
-    return [ITEM_ASSINATURA_PADRAO]
+    return campos
 
 
 def eh_item_assinatura(campo: str) -> bool:

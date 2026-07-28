@@ -32,10 +32,27 @@ from pdfs import normalizar
 PESO_NOME_ARQUIVO = 3
 PESO_TEXTO = 1
 
+# Quantos padrões "fracos" (texto OU nome_arquivo_fraco) distintos precisam
+# bater para um candidato ser aceito quando não há nenhum acerto de nome de
+# arquivo FORTE. Uma única menção solta do código/rótulo (ex.: uma
+# referência de passagem a "FQ415-075" dentro de uma Ordem de Serviço que
+# na verdade é outro tipo de documento) não deve, sozinha, classificar o
+# arquivo inteiro.
+MIN_ACERTOS_TEXTO = 2
+
 MARCADORES = {
     "contrato": {
         "aliases": ["Contrato", "Contrato / Aditivo"],
-        "nome_arquivo": [r"contrat", r"aditivo", r"\barp\b", r"registro de preco"],
+        "nome_arquivo": [r"contrat", r"aditivo", r"registro de preco"],
+        # Siglas curtas (2-4 letras) são um indício FRACO pelo nome do
+        # arquivo: "arp", "pb", "nt", "dra" etc. podem aparecer soltas em
+        # QUALQUER nome de arquivo só como referência a outro documento
+        # (ex.: uma planilha de saldo cujo nome cita "NT 2023-0574" sem
+        # ela mesma ser a Nota Técnica). Por isso entram com o mesmo peso
+        # baixo de um padrão de texto (PESO_TEXTO), não de PESO_NOME_ARQUIVO
+        # — assim elas só decidem a classificação quando reforçadas por
+        # outro indício (outro padrão de nome_arquivo_fraco OU de texto).
+        "nome_arquivo_fraco": [r"\barp\b"],
         "texto": [
             r"instrumento (particular )?de contrato",
             r"\baditivo\b",
@@ -46,12 +63,14 @@ MARCADORES = {
     },
     "projeto_basico": {
         "aliases": ["Projeto Básico"],
-        "nome_arquivo": [r"projeto\s*basic", r"\bpb\b"],
+        "nome_arquivo": [r"projeto\s*basic"],
+        "nome_arquivo_fraco": [r"\bpb\b"],
         "texto": [r"projeto basico"],
     },
     "nota_tecnica": {
         "aliases": ["Nota Técnica"],
-        "nome_arquivo": [r"nota\s*tecnic", r"\bnt\b"],
+        "nome_arquivo": [r"nota\s*tecnic"],
+        "nome_arquivo_fraco": [r"\bnt\b"],
         "texto": [r"nota tecnica", r"numero da nota tecnica"],
     },
     "fq415_075": {
@@ -81,7 +100,8 @@ MARCADORES = {
     },
     "doc_referencia_area": {
         "aliases": ["Documento de Referência da Área"],
-        "nome_arquivo": [r"referencia.*area", r"\bdra\b"],
+        "nome_arquivo": [r"referencia.*area"],
+        "nome_arquivo_fraco": [r"\bdra\b"],
         "texto": [r"documento de referencia da area"],
     },
     "fq412_034": {
@@ -123,6 +143,25 @@ def identificar_documento(caminho: str, texto: str, candidatos: list) -> str:
     corresponde ao arquivo em `caminho`, combinando indícios do nome do
     arquivo com indícios do texto/conteúdo.
 
+    Cada categoria tem 3 tipos de indício:
+      - "nome_arquivo": marcador FORTE e específico no nome do arquivo
+        (ex.: "fq412034", "nota tecnica", "projeto basico"). Peso
+        PESO_NOME_ARQUIVO.
+      - "nome_arquivo_fraco": sigla curta e ambígua no nome do arquivo
+        (ex.: "nt", "pb", "arp", "dra"), que pode aparecer só como
+        referência solta dentro do nome de um documento de OUTRO tipo
+        (ex.: uma planilha de saldo chamada "...SALDO NT 2023-0574..."
+        não é, ela mesma, a Nota Técnica). Peso PESO_TEXTO (o mesmo de um
+        padrão de texto), para nunca decidir a classificação sozinha.
+      - "texto": padrão no conteúdo do arquivo. Peso PESO_TEXTO.
+
+    LIMIAR MÍNIMO DE CONFIANÇA: um candidato só é aceito se tiver pelo
+    menos 1 acerto de "nome_arquivo" (forte), OU pelo menos
+    `MIN_ACERTOS_TEXTO` acertos somando "nome_arquivo_fraco" + "texto"
+    (indícios fracos, mas reforçados um pelo outro). Um único indício
+    fraco isolado (ex.: uma sigla solta no nome, ou uma menção solta no
+    texto) nunca é suficiente para classificar o arquivo inteiro.
+
     Devolve None se nenhum candidato tiver indício suficiente (nesse
     caso, quem chama deve avisar o usuário em vez de adivinhar).
     """
@@ -137,14 +176,24 @@ def identificar_documento(caminho: str, texto: str, candidatos: list) -> str:
         if not categoria:
             continue
 
-        pontuacao = 0
-        for padrao in categoria.get("nome_arquivo", []):
-            if re.search(padrao, nome_normalizado):
-                pontuacao += PESO_NOME_ARQUIVO
+        acertos_nome_forte = sum(
+            1 for padrao in categoria.get("nome_arquivo", [])
+            if re.search(padrao, nome_normalizado)
+        )
+        acertos_nome_fraco = sum(
+            1 for padrao in categoria.get("nome_arquivo_fraco", [])
+            if re.search(padrao, nome_normalizado)
+        )
+        acertos_texto = sum(
+            1 for padrao in categoria.get("texto", [])
+            if re.search(padrao, texto_normalizado)
+        )
+        acertos_fracos = acertos_nome_fraco + acertos_texto
 
-        for padrao in categoria.get("texto", []):
-            if re.search(padrao, texto_normalizado):
-                pontuacao += PESO_TEXTO
+        if acertos_nome_forte == 0 and acertos_fracos < MIN_ACERTOS_TEXTO:
+            continue  # indício insuficiente: não confia neste candidato
+
+        pontuacao = acertos_nome_forte * PESO_NOME_ARQUIVO + acertos_fracos * PESO_TEXTO
 
         if pontuacao > melhor_pontuacao:
             melhor_pontuacao = pontuacao

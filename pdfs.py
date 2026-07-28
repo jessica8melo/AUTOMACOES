@@ -371,11 +371,29 @@ INDICADORES_ASSINATURA = [
     ("GOV.BR / ICP-Brasil", r"assinado\s+de\s+forma\s+eletr[oô]nica|verifique\s+em\s+https?://verificador\.iti\.gov\.br|assinatura\s+qualificada"),
     ("DocuSign", r"docusign"),
     ("Clicksign", r"clicksign"),
+    # Bloco interno da BBTS (ex.: Notas Técnicas): "Assinado eletronicamente
+    # por: NOME, em DD/MM/AAAA às HH:MM" seguido do cargo/área na(s) linha(s)
+    # de baixo. Precisa vir ANTES do "Genérico" porque a frase é parecida
+    # ("assinado eletronicamente"), mas na ordem "assinado eletronicamente
+    # POR", não "documento assinado eletronicamente".
+    ("BBTS (interno)", r"assinado\s+eletronicamente\s+por\s*:"),
     ("Genérico", r"assinado\s+digitalmente|documento\s+assinado\s+eletronicamente"),
 ]
 
 PADRAO_SIGNATARIO = re.compile(
     r"([A-ZÀ-Ú][A-ZÀ-Ú0-9\s/]+?)\s-\s(.+?)\s-\s(\d{2}/\d{2}/\d{4})\s[–-]\s(\d{2}:\d{2})"
+)
+
+# Bloco interno da BBTS: "Assinado eletronicamente por: NOME, em DD/MM/AAAA
+# às HH:MM", com o CARGO na linha logo abaixo (ex.: "GERENTE DE DIVISAO").
+# A palavra "às" às vezes some (mesmo dentro do MESMO documento, ex.: os
+# primeiros signatários de uma Nota Técnica têm "às" e os últimos não) —
+# por isso ela é opcional aqui.
+PADRAO_SIGNATARIO_BBTS = re.compile(
+    r"Assinado\s+eletronicamente\s+por:\s*"
+    r"([A-ZÀ-Ú][A-ZÀ-Ú0-9\s/]+?),\s*em\s+(\d{2}/\d{2}/\d{4})\s+(?:[àa]s\s+)?(\d{2}:\d{2})"
+    r"\s*\n\s*(.+)",
+    re.IGNORECASE,
 )
 
 PADRAO_SIGNATARIO_D4SIGN = re.compile(
@@ -423,6 +441,25 @@ def verificar_assinatura(texto: str) -> dict:
     for nome, cargo, data, hora in PADRAO_SIGNATARIO.findall(texto):
         resultado["signatarios"].append({
             "nome": " ".join(nome.split()),
+            "cargo": " ".join(cargo.split()),
+            "data": data,
+            "hora": hora,
+        })
+
+    # Formato interno da BBTS: "Assinado eletronicamente por: NOME, em
+    # DD/MM/AAAA às HH:MM" com o cargo na linha seguinte (ex.: Notas
+    # Técnicas). Era o único formato de assinatura sem suporte nenhum —
+    # nem entrava no "assinado" (nenhum INDICADOR batia) nem tinha
+    # signatário extraído.
+    ja_vistos_bbts = {(s["nome"], s["data"], s["hora"]) for s in resultado["signatarios"]}
+    for nome, data, hora, cargo in PADRAO_SIGNATARIO_BBTS.findall(texto):
+        nome_normalizado = " ".join(nome.split())
+        chave = (nome_normalizado, data, hora)
+        if chave in ja_vistos_bbts:
+            continue
+        ja_vistos_bbts.add(chave)
+        resultado["signatarios"].append({
+            "nome": nome_normalizado,
             "cargo": " ".join(cargo.split()),
             "data": data,
             "hora": hora,
