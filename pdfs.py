@@ -361,6 +361,22 @@ PADROES_ESPECIAIS = {
         r"assinad[ao].{0,60}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
         r"firmad[ao].{0,60}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
     ],
+    # A "Data do contrato" nunca aparece como rótulo solto ("Data do
+    # contrato: ..."). Em Contratos, costuma vir na fórmula de fecho
+    # ("...e assinam o presente contrato em DD de mês de AAAA..."). Em
+    # Aditivos, o contrato original já está em vigor — a data que importa
+    # é a de celebração do PRIMITIVO, citada na cláusula de Ratificação
+    # ("...contrato de prestação de serviços... celebrado pelas partes em
+    # 17 de março de 2022 e seus respectivos aditivos..."). Por isso os
+    # padrões abaixo cobrem tanto "celebrado em" (Aditivos) quanto
+    # "firmado/assinado em" (Contratos), nessa ordem de prioridade.
+    "Data do contrato": [
+        r"celebrad[ao]\s+pelas\s+partes\s+em\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4})",
+        r"celebrad[ao].{0,80}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
+        r"firmad[ao]\s+e\s+assinad[ao].{0,80}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4})",
+        r"assinad[ao].{0,60}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
+        r"firmad[ao].{0,60}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
+    ],
     "DGCO nº": [
         # \.? e :? extras: cobre "DGCO n.º", "DGCO nº:", "DGCO Nº :" etc.
         r"DGCO\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)",
