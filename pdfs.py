@@ -29,8 +29,24 @@ import pypdf
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 try:
+    import os
+    import platform
     import pytesseract
     OCR_DISPONIVEL = True
+
+    # No Windows o Tesseract não entra no PATH sozinho (diferente do
+    # macOS/Linux via brew/apt). Se o binário configurado não for
+    # encontrado, tenta os locais padrão do instalador oficial antes de
+    # desistir — assim não é preciso mexer manualmente na variável PATH.
+    if platform.system() == "Windows":
+        caminhos_padrao = [
+            r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+            r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        ]
+        for caminho in caminhos_padrao:
+            if os.path.isfile(caminho):
+                pytesseract.pytesseract.tesseract_cmd = caminho
+                break
 except ImportError:
     OCR_DISPONIVEL = False
 
