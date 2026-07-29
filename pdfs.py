@@ -11,9 +11,22 @@ Uso:
 import sys
 import re
 import unicodedata
+import logging
 from difflib import SequenceMatcher
 
 import pdfplumber
+import pypdf
+
+# O pdfminer (usado por baixo dos panos pelo pdfplumber) solta avisos no log
+# quando encontra comandos de cor "estranhos" dentro do PDF — o caso mais
+# comum é um preenchimento com PADRÃO (Pattern), tipo "/P1 scn", que ele
+# tenta (sem sucesso) interpretar como um número de nível de cinza: "Cannot
+# set non-stroke color: '/P1' is an invalid float value". Isso é só um
+# aviso — o pdfminer ignora aquele comando específico e segue extraindo o
+# resto do texto/tabelas normalmente — mas polui a saída do checklist sem
+# agregar nada útil. Por isso o logger do pdfminer fica restrito a ERROR
+# (avisos/warnings deixam de ser exibidos; erros de verdade continuam).
+logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 try:
     import pytesseract
@@ -148,13 +161,50 @@ def _nao_eh_marca_dagua(obj) -> bool:
     return not all(abs(c - 0.85882) < 0.02 for c in cor[:3])
 
 
+# Área mínima (largura x altura, em pontos PDF) para uma imagem ser
+# considerada "grande o bastante para ser um carimbo de assinatura".
+# Escolhida para pegar carimbos típicos (ex.: 373x288 = ~107k) e ignorar
+# logos/cabeçalhos finos de página (ex.: 146x17 = ~2.5k).
+AREA_MINIMA_IMAGEM_CARIMBO = 5000
+
+
+def _pagina_tem_imagem_grande(pagina, area_minima: float = AREA_MINIMA_IMAGEM_CARIMBO) -> bool:
+    """
+    True se a página tiver alguma imagem grande o bastante para ser um
+    carimbo de assinatura (ex.: aquele selo com "Assinado de forma
+    digital por..."). Usado para decidir se vale rodar OCR mesmo em
+    páginas que já têm bastante texto normal — o carimbo pode conviver
+    com texto real na mesma página (ex.: um Projeto Básico com campos
+    normais + assinatura ao final), e nesse caso o texto do carimbo em
+    si nunca aparece na extração normal de texto, só na imagem.
+    """
+    for imagem in pagina.images:
+        largura = imagem.get("width", 0) or 0
+        altura = imagem.get("height", 0) or 0
+        if largura * altura >= area_minima:
+            return True
+    return False
+
+
 def extrair_texto(caminho_pdf: str) -> str:
     partes = []
     with pdfplumber.open(caminho_pdf) as pdf:
         for pagina in pdf.pages:
             pagina_limpa = pagina.filter(_nao_eh_marca_dagua)
             texto_pagina = pagina_limpa.extract_text(layout=True) or ""
-            if len(texto_pagina.strip()) < 200 and pagina.images:
+            # Antes, o OCR só rodava quando a página inteira tinha pouco
+            # texto (< 200 caracteres), assumindo que era uma página
+            # "só imagem". Isso deixava passar carimbos de assinatura
+            # (ex.: selo do Adobe Acrobat/certificado digital) em páginas
+            # que já têm bastante texto normal (valores, cláusulas etc.) —
+            # o carimbo é só mais uma imagem na página, e seu texto nunca
+            # é lido. Agora também rodamos OCR quando há uma imagem grande
+            # o suficiente para ser um carimbo, mesmo com texto normal
+            # abundante na página.
+            precisa_ocr = pagina.images and (
+                len(texto_pagina.strip()) < 200 or _pagina_tem_imagem_grande(pagina)
+            )
+            if precisa_ocr:
                 texto_ocr = ocr_pagina(pagina)
                 if texto_ocr:
                     texto_pagina = f"{texto_pagina}\n{texto_ocr}"
@@ -377,6 +427,13 @@ INDICADORES_ASSINATURA = [
     # ("assinado eletronicamente"), mas na ordem "assinado eletronicamente
     # POR", não "documento assinado eletronicamente".
     ("BBTS (interno)", r"assinado\s+eletronicamente\s+por\s*:"),
+    # Carimbo padrão do Adobe Acrobat para certificado digital (ICP-Brasil
+    # via e-CPF/e-CNPJ, por ex.): "Assinado de forma digital por NOME
+    # (usuario)\nDados: AAAA.MM.DD HH:MM:SS ±HH'MM'". Geralmente vem como
+    # imagem/carimbo na página (não como texto normal do PDF), então só é
+    # capturado quando a página passa pelo OCR — ver _pagina_tem_imagem_grande
+    # em extrair_texto.
+    ("Adobe Acrobat (certificado digital)", r"assinado\s+de\s+forma\s+digital\s+por"),
     ("Genérico", r"assinado\s+digitalmente|documento\s+assinado\s+eletronicamente"),
 ]
 
@@ -413,6 +470,96 @@ PADRAO_NUMERO_PROCESSO = re.compile(
 PADRAO_CODIGO_D4SIGN = re.compile(
     r"[Cc][oó]digo\s+do\s+documento\s+([0-9a-fA-F\-]{20,40})"
 )
+
+# Carimbo do Adobe Acrobat: "Assinado de forma digital por NOME (usuario)
+# Dados: AAAA.MM.DD HH:MM:SS ±HH'MM'". Como esse texto normalmente só
+# aparece via OCR (o carimbo é uma imagem), o layout pode sair um pouco
+# fora de ordem — por isso o casamento é tolerante a quebras de linha
+# extras entre as partes (re.DOTALL) e não exige a data logo em seguida.
+PADRAO_SIGNATARIO_ADOBE = re.compile(
+    r"Assinado\s+de\s+forma\s+digital\s+por\s+"
+    r"(.+?)\s*\(([\w.\-]+)\)"
+    r".{0,40}?Dados:\s*(\d{4})\.(\d{2})\.(\d{2})\s+(\d{2}:\d{2}:\d{2})",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+PADRAO_DATA_ASSINATURA_PDF = re.compile(
+    r"D:(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})"
+)
+
+
+def verificar_assinaturas_acroform(caminho_pdf: str) -> dict:
+    """
+    Lê as assinaturas digitais "de verdade" do PDF: os campos /Sig do
+    AcroForm, que guardam a assinatura criptográfica (certificado PKI —
+    ICP-Brasil, e-CPF/e-CNPJ via Adobe, por ex.) independente de haver ou
+    não um carimbo visual desenhado na página.
+
+    Isso cobre um caso que nem o texto normal nem o OCR de página
+    conseguem pegar: o carimbo "Assinado de forma digital por NOME
+    (usuario) / Dados: AAAA.MM.DD HH:MM:SS ±HH'MM'" que o Adobe Reader
+    mostra é uma STRING PRÓPRIA DO ADOBE, montada a partir do dicionário
+    /V de cada campo /Sig (chaves /Name e /M) — ela não fica "desenhada"
+    nos pixels da página nem no conteúdo/anotações do PDF em si, então
+    nenhum extrator de texto ou OCR de página consegue enxergá-la. Esse
+    dicionário, porém, sempre existe no PDF (é o que garante a validade
+    jurídica da assinatura), então lê-lo diretamente é mais confiável do
+    que tentar reconhecer o carimbo visual.
+    """
+    resultado = {"assinado": False, "sistema": None, "signatarios": []}
+    try:
+        leitor = pypdf.PdfReader(caminho_pdf)
+    except Exception as erro:
+        print(f"[AVISO] Falha ao abrir PDF para checar assinaturas do AcroForm: {erro}", file=sys.stderr)
+        return resultado
+
+    acroform = leitor.trailer.get("/Root", {}).get("/AcroForm")
+    campos = acroform.get("/Fields") if acroform else None
+    if not campos:
+        return resultado
+
+    for campo in campos:
+        obj = campo.get_object()
+        if obj.get("/FT") != "/Sig":
+            continue
+        valor = obj.get("/V")
+        if not valor:
+            continue  # campo de assinatura existe no formulário mas ainda não foi assinado
+        v = valor.get_object()
+        nome_bruto = v.get("/Name")
+        if not nome_bruto:
+            continue
+
+        resultado["assinado"] = True
+        if not resultado["sistema"]:
+            filtro = str(v.get("/Filter", ""))
+            resultado["sistema"] = (
+                "Adobe/PKI (certificado digital)" if "Adobe" in filtro else (filtro.strip("/") or "PKI")
+            )
+
+        # O /Name normalmente vem como "NOME (usuario)" — separa os dois.
+        match_nome = re.match(r"(.+?)\s*\(([\w.\-]+)\)\s*$", str(nome_bruto))
+        nome = match_nome.group(1).strip() if match_nome else str(nome_bruto)
+        usuario = match_nome.group(2) if match_nome else ""
+
+        data_str, hora_str = "", ""
+        m_data = v.get("/M")
+        if m_data:
+            match_data = PADRAO_DATA_ASSINATURA_PDF.match(str(m_data))
+            if match_data:
+                ano, mes, dia, h, mi, _s = match_data.groups()
+                data_str = f"{dia}/{mes}/{ano}"
+                hora_str = f"{h}:{mi}"
+
+        resultado["signatarios"].append({
+            "nome": nome,
+            "cargo": usuario,  # aqui "cargo" guarda o usuário/login do certificado
+            "data": data_str,
+            "hora": hora_str,
+        })
+
+    return resultado
 
 
 def verificar_assinatura(texto: str) -> dict:
@@ -482,6 +629,23 @@ def verificar_assinatura(texto: str) -> dict:
             "hora": hora,
         })
 
+    # Carimbo do Adobe Acrobat / certificado digital (ICP-Brasil): "Assinado
+    # de forma digital por NOME (usuario) Dados: AAAA.MM.DD HH:MM:SS".
+    ja_vistos_adobe = {(s["nome"], s["data"], s["hora"]) for s in resultado["signatarios"]}
+    for nome, usuario, ano, mes, dia, hora in PADRAO_SIGNATARIO_ADOBE.findall(texto):
+        nome_normalizado = " ".join(nome.split())
+        data = f"{dia}/{mes}/{ano}"
+        chave = (nome_normalizado, data, hora)
+        if chave in ja_vistos_adobe:
+            continue
+        ja_vistos_adobe.add(chave)
+        resultado["signatarios"].append({
+            "nome": nome_normalizado,
+            "cargo": usuario,  # aqui "cargo" guarda o usuário/login do certificado
+            "data": data,
+            "hora": hora,
+        })
+
     if resultado["signatarios"] and not resultado["assinado"]:
         resultado["assinado"] = True
 
@@ -521,7 +685,32 @@ def processar_pdf(caminho_pdf: str, campos_procurados: list = None) -> dict:
 
         resultado[campo] = " ".join(valor.split()) if valor else None
 
-    resultado["_assinatura"] = verificar_assinatura(texto)
+    # Duas fontes de verdade, combinadas: o AcroForm (/Sig) é a mais
+    # confiável — é a assinatura criptográfica de fato, presente mesmo
+    # quando não há nenhum carimbo visual na página (caso do Adobe
+    # Reader). O texto/OCR pega sistemas que carimbam texto de verdade
+    # na página (D4Sign, Aprovve, bloco interno da BBTS etc.), incluindo
+    # casos sem AcroForm nenhum. Um documento é considerado assinado se
+    # qualquer uma das duas fontes indicar isso; os signatários das duas
+    # são somados (evitando duplicar o mesmo nome+data+hora).
+    assinatura_acroform = verificar_assinaturas_acroform(caminho_pdf)
+    assinatura_texto = verificar_assinatura(texto)
+
+    signatarios_combinados = list(assinatura_acroform["signatarios"])
+    ja_vistos = {(s["nome"], s["data"], s["hora"]) for s in signatarios_combinados}
+    for s in assinatura_texto["signatarios"]:
+        chave = (s["nome"], s["data"], s["hora"])
+        if chave in ja_vistos:
+            continue
+        ja_vistos.add(chave)
+        signatarios_combinados.append(s)
+
+    resultado["_assinatura"] = {
+        "assinado": assinatura_acroform["assinado"] or assinatura_texto["assinado"],
+        "sistema": assinatura_acroform["sistema"] or assinatura_texto["sistema"],
+        "numero_processo": assinatura_texto["numero_processo"],
+        "signatarios": signatarios_combinados,
+    }
 
     return resultado
 
