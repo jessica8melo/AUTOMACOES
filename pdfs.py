@@ -385,7 +385,7 @@ PADROES_ESPECIAIS = {
     # XX.XXX.XXX/XXXX-XX, denominada CONTRATADA". Interessa sempre o da
     # CONTRATADA (o fornecedor), nunca o da CONTRATANTE (BB Tecnologia).
     "CNPJ": [
-        r"CNPJ\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)\s*,?\s*denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
+        r"CNPJ\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)\s*,?\s*(?:doravante\s+)?denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
     ],
     # Aparece como cabeçalho no topo do documento: "Nota Técnica - 2022/0263"
     "Número da Nota Técnica": [
@@ -405,6 +405,20 @@ PADROES_ESPECIAIS = {
         r"pagament\w*.{0,250}?\bem\s+(?:at[ée]\s+)?(\d+\s*(?:\([^)]*\))?\s*dias\s+corridos)",
         r"(\d+\s*(?:\([^)]*\))?\s*dias\s+corridos)(?=.{0,150}?(?:emiss[ãa]o\s+da\s+nota\s+fiscal|conclus[ãa]o\s+d[eas]))",
     ],
+    # Em aditivos de repactuação, o valor total aparece na frase "O valor
+    # total do contrato passará de R$ X para o valor total de R$ Y" — o
+    # que interessa é sempre o valor NOVO (Y, depois do "para"), nunca o
+    # valor antigo que vem antes dele na mesma frase. Por isso tem
+    # prioridade especial (ver CAMPOS_PRIORIDADE_ESPECIAL): a busca
+    # genérica por rótulo pegaria o primeiro "R$ ..." que aparece perto de
+    # "valor total", que costuma ser justamente o valor antigo.
+    # O segundo padrão cobre contratos sem repactuação, onde o valor total
+    # só aparece uma vez ("no valor total de R$ X" / "valor total é de
+    # R$ X").
+    "Valor total": [
+        r"valor\s+total\s+do\s+contrato\s+passar[áa]\s+de\s+R\$\s*[\d.,]+\s+para\s+(?:o\s+valor\s+total\s+de\s+)?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+        r"(?:no\s+)?valor\s+total\s+(?:do\s+contrato\s+)?(?:[ée]|ser[áa])\s+de\s+R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+    ],
 }
 
 # Campos cuja busca via padrão especial (regex) deve ter PRIORIDADE sobre a
@@ -417,6 +431,7 @@ PADROES_ESPECIAIS = {
 # corridos, que pode estar em outro parágrafo do documento).
 CAMPOS_PRIORIDADE_ESPECIAL = {
     "Condições de Pagamento",
+    "Valor total",
 }
 
 
