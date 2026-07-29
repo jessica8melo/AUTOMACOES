@@ -43,6 +43,14 @@ try:
             r"C:\Program Files\Tesseract-OCR\tesseract.exe",
             r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
         ]
+        # Instalação sem privilégio de administrador (comum quando o
+        # instalador é rodado sem permissão para gravar em Program Files)
+        # cai em AppData\Local do usuário logado.
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        if local_appdata:
+            caminhos_padrao.append(
+                os.path.join(local_appdata, "Tesseract-OCR", "tesseract.exe")
+            )
         for caminho in caminhos_padrao:
             if os.path.isfile(caminho):
                 pytesseract.pytesseract.tesseract_cmd = caminho
