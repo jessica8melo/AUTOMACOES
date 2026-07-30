@@ -25,7 +25,8 @@ DOCUMENTOS = {
         "Quantidade",
         "Preço unitário",
         "Valor total",
-        "Data do contrato",         
+        "Data do contrato",
+        "Condições de Pagamento",         
     ],
     "FQ415-075": [
         "Código do Item",
