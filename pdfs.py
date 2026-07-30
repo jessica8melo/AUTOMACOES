@@ -334,8 +334,14 @@ def buscar_em_texto(texto: str, campo: str):
     # primeiro sinal claro de que acabou: uma linha em branco, ou o início
     # do próximo item numerado (ex.: "9.", "10.1", "2.3.2.1.4.2"), ou o fim
     # do texto — o que vier primeiro.
+    # \b nas duas pontas: sem isso, um campo curto como "UOR" também
+    # "casava" como SUBSTRING dentro de qualquer palavra que contivesse
+    # essas letras em sequência (ex.: "LÍQUOR", em "...VÍRUS HERPES 6
+    # LÍQUOR - IGG/IGM..." — nada a ver com o campo UOR do documento) e
+    # aí o valor capturado era o que viesse depois do "-", uma lista de
+    # exames sem relação nenhuma com o campo procurado.
     padrao_mesma_linha = re.compile(
-        rf"{campo_escapado}\s*[:\-]\s*(.+?)"
+        rf"\b{campo_escapado}\b\s*[:\-]\s*(.+?)"
         rf"(?=\n\s*\n|\n\s*\d+(?:\.\d+)*[\.\)]|\n\s*[A-ZÀ-Ý][^\n:]{{0,80}}:|\Z)",
         re.IGNORECASE | re.DOTALL,
     )
@@ -345,7 +351,7 @@ def buscar_em_texto(texto: str, campo: str):
         if valor:
             return valor
 
-    padrao_linha_seguinte = re.compile(rf"{campo_escapado}\s*\n\s*(.+)", re.IGNORECASE)
+    padrao_linha_seguinte = re.compile(rf"\b{campo_escapado}\b\s*\n\s*(.+)", re.IGNORECASE)
     match = padrao_linha_seguinte.search(texto)
     if match:
         valor = match.group(1).strip()
