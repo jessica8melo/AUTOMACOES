@@ -206,9 +206,6 @@ def processar_documento_anexo(caminho: str, tipo: str, campos: list) -> None:
             else:
                 print(f"    [OK] {campo} ({len(valores)} linhas): {valores}")
 
-        if precisa_conferir_assinatura:
-            print("    [AVISO] Conferência de assinatura não se aplica a planilhas — confira manualmente.")
-
 
 def executar_checklist(id_fluxo: str, pasta_anexos: str = PASTA_ANEXOS_PADRAO,
                         excluir: set = None) -> None:

@@ -26,17 +26,6 @@ ASSINATURAS_PREFIXO = "ASSINATURAS:"
 ITEM_ASSINATURA_PADRAO = f"{ASSINATURAS_PREFIXO} Conferir assinaturas de todos os documentos"
 
 FLUXOS = {
-    "FQ412-033": {
-        "nome": "Liberação de Acordo de Compra em Aberto",
-        # Conferir vigência do contrato no SISCON
-        "documentos": [
-            "Solicitação de Entrega",
-            "FQ415-075",
-            "Nota Técnica",
-            "FQ412-034",
-            "FQ412-035",
-        ],
-    },
     "FQ412-043": {
         "nome": "Liberação de Acordo de Compra do Contrato",
         # Conferir se foi criada ordem de compra no tipo padrão
@@ -56,6 +45,17 @@ FLUXOS = {
             "Projeto Básico",
             "Nota Técnica",
             "FQ415-075",
+        ],
+    },
+    "FQ412-033": {
+        "nome": "Liberação de Acordo de Compra em Aberto",
+        # Conferir vigência do contrato no SISCON
+        "documentos": [
+            "Solicitação de Entrega",
+            "FQ415-075",
+            "Nota Técnica",
+            "FQ412-034",
+            "FQ412-035",
         ],
     },
     "FQ415-055": {
