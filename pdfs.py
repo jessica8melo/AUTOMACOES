@@ -120,7 +120,17 @@ def parecido(a: str, b: str, limite: float = 0.72) -> bool:
     if len(curto) >= 4 and curto in longo:
         if len(curto.split()) >= 2 or len(curto) / len(longo) >= 0.5:
             return True
-    return SequenceMatcher(None, na, nb).ratio() >= limite
+    # Fallback por similaridade "solta" (SequenceMatcher): sem a checagem
+    # de "contém" acima, esse fallback é o único critério restante, e ele
+    # compara só a SEQUÊNCIA DE LETRAS — não o significado. Isso faz pares
+    # de palavras curtas e completamente diferentes no sentido, mas
+    # parecidas na grafia, colidirem (ex.: "Unidade" x "Quantidade" tem
+    # ratio ~0.82, folgadamente acima do limite antigo de 0.72, mas uma é
+    # "unit" e a outra é "quantity" — nada a ver uma com a outra). Por
+    # isso o limite do fallback é mais rígido (0.85) do que o usado para a
+    # checagem de "contém" acima, que já garante por si só as variações
+    # mais comuns (plural/singular, rótulo composto etc.).
+    return SequenceMatcher(None, na, nb).ratio() >= max(limite, 0.85)
 
 
 def parece_valor(texto: str) -> bool:
@@ -309,17 +319,49 @@ def mapear_campos_em_tabela(tabela):
 
 
 def buscar_em_tabelas(tabelas, campo: str):
+    """
+    ANTES: retornava assim que achasse a PRIMEIRA tabela (na ordem em que
+    aparecem no PDF) com um rótulo/cabeçalho parecido com `campo`. Isso
+    funciona bem quando o rótulo é específico o bastante para só existir
+    de fato num lugar (ex.: "DGCO", "OC Master"). Mas para um rótulo curto
+    e genérico como "Quantidade" — que reaparece em várias tabelas
+    completamente diferentes e sem relação entre si dentro do mesmo PDF
+    (ex., num contrato de limpeza: quantidade de lixeiras no anexo de
+    acessórios, quantidade de salas no dimensionamento do prédio,
+    quantidade de cada material de limpeza etc.) — "a primeira tabela que
+    bater" é essencialmente aleatória: depende só da ordem das páginas,
+    não de qual delas é realmente "a quantidade do contrato". Foi assim
+    que "Quantidade" acabou virando "64" (quantidade de um item de uma
+    tabela de acessórios, nº de página, sem nenhuma relação com o
+    contrato em si).
+
+    AGORA: primeiro reúne TODOS os valores encontrados no documento
+    inteiro para esse campo. Se todos forem iguais (o mesmo valor
+    aparecendo em mais de uma tabela, ou uma única tabela batendo), o
+    valor é devolvido normalmente — não há ambiguidade real. Mas se
+    houver valores DIFERENTES vindos de tabelas diferentes, isso é sinal
+    de que o campo é genérico demais para esse documento (não tem *um*
+    valor de "Quantidade" que faça sentido no nível do contrato) — nesse
+    caso, é mais honesto devolver None (o chamador reporta "não
+    encontrado") do que inventar uma resposta a partir da tabela que por
+    acaso apareceu primeiro.
+    """
+    valores_encontrados = []
+
     for tabela in tabelas:
         pares, cabecalho_valor = mapear_campos_em_tabela(tabela)
 
         for rotulo, valor in pares:
             if parecido(rotulo, campo):
-                return valor
+                valores_encontrados.append(valor)
 
         for cabecalho, valor in cabecalho_valor.items():
             if parecido(cabecalho, campo):
-                return valor
+                valores_encontrados.append(valor)
 
+    valores_unicos = list(dict.fromkeys(v for v in valores_encontrados if v))
+    if len(valores_unicos) == 1:
+        return valores_unicos[0]
     return None
 
 
@@ -464,10 +506,18 @@ PADROES_ESPECIAIS = {
     # "valor total", que costuma ser justamente o valor antigo.
     # O segundo padrão cobre contratos sem repactuação, onde o valor total
     # só aparece uma vez ("no valor total de R$ X" / "valor total é de
-    # R$ X").
+    # R$ X" / "valor total estimado de até R$ X" / "perfazendo o valor
+    # total de até R$ X"). Antes o padrão exigia literalmente "é" ou
+    # "será" logo antes de "de R$", e "de R$" colado (sem nada entre
+    # eles) — por isso não casava com frases que inserem "estimado" antes
+    # do "de", ou "até" entre o "de" e o "R$" (ambos muito comuns em
+    # contratos que falam em valor "estimado"/"teto", como "cobraremos o
+    # valor total estimado de até R$ 1.800.000,00" ou "perfazendo o valor
+    # total de até R$ 1.800.000,00"). Agora "é/será" e "estimado" são
+    # opcionais, e "até" entre "de" e "R$" também é aceito.
     "Valor total": [
         r"valor\s+total\s+do\s+contrato\s+passar[áa]\s+de\s+R\$\s*[\d.,]+\s+para\s+(?:o\s+valor\s+total\s+de\s+)?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
-        r"(?:no\s+)?valor\s+total\s+(?:do\s+contrato\s+)?(?:[ée]|ser[áa])\s+de\s+R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
+        r"(?:no\s+)?valor\s+total\s+(?:do\s+contrato\s+)?(?:estimado\s+)?(?:(?:[ée]|ser[áa])\s+)?de\s+(?:at[ée]\s+)?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
     ],
 }
 
