@@ -409,6 +409,23 @@ PADROES_ESPECIAIS = {
     "CNPJ": [
         r"CNPJ\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)\s*,?\s*(?:doravante\s+)?denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
     ],
+    # Nome/Razão Social do FORNECEDOR (a CONTRATADA), não o texto qualquer
+    # que segue a palavra "CONTRATADA" no meio do contrato (ex.: cláusula
+    # de pagamento "A CONTRATANTE pagará à CONTRATADA:" — isso NÃO é o
+    # nome da empresa, mas a busca genérica por rótulo "Contratada:"
+    # casava justamente com essa cláusula, por ser a primeira ocorrência
+    # de "CONTRATADA" seguida de dois-pontos no texto).
+    #
+    # Fórmula clássica de qualificação: "<empresa>, ..., inscrita no CNPJ
+    # nº XX.XXX.XXX/XXXX-XX, ... denominada CONTRATADA". Cobre contratos
+    # em texto corrido (fora do modelo de caixas lado a lado da BBTS, que
+    # é tratado à parte por _extrair_contratada_por_coluna, chamada antes
+    # deste padrão em buscar_com_padroes_especiais).
+    "Contratada": [
+        r"([A-ZÀ-Ü][A-Za-zÀ-ÿ0-9°º\.,'&/\-\s]{2,120}?),?\s*(?:pessoa\s+jur[íi]dica[^,]{0,80},)?\s*"
+        r"(?:inscrita|estabelecida)[^,]{0,80}?CNPJ\s*n[ºo°]?\.?\s*:?\s*[\d./\-]+\s*,?\s*"
+        r"(?:doravante\s+)?denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
+    ],
     # Aparece como cabeçalho no topo do documento: "Nota Técnica - 2022/0263"
     "Número da Nota Técnica": [
         r"Nota\s+T[ée]cnica\s*[-–]\s*(\d{4}\s*/\s*\d+)",
@@ -462,7 +479,77 @@ PADROES_ESPECIAIS = {
 CAMPOS_PRIORIDADE_ESPECIAL = {
     "Condições de Pagamento",
     "Valor total",
+    # Sem isso, a busca genérica por rótulo "Contratada: ..." casa com a
+    # primeira ocorrência de "CONTRATADA" seguida de ":" no texto — que
+    # normalmente é a cláusula de pagamento ("A CONTRATANTE pagará à
+    # CONTRATADA:"), não a qualificação das partes. Ver padrão especial
+    # "Contratada" em PADROES_ESPECIAIS.
+    "Contratada",
 }
+
+
+def _extrair_contratada_por_coluna(texto: str):
+    """
+    No modelo de contrato da BBTS, a qualificação das partes vem em duas
+    caixas lado a lado — CONTRATANTE (esquerda) e CONTRATADA (direita) —,
+    cada uma com "RAZÃO SOCIAL: ... / NOME FANTASIA: ... / CNPJ: ... /
+    ENDEREÇO: ...". Como o texto é extraído com extract_text(layout=True)
+    (preserva a posição horizontal de cada palavra na página), as duas
+    colunas ficam intercaladas na MESMA linha de texto — ex.:
+    "RAZÃO SOCIAL: BB TECNOLOGIA E      RAZÃO SOCIAL: SANT'COSTA LIMPEZA".
+    Uma regex simples de "ache a 2ª ocorrência de RAZÃO SOCIAL" falha
+    porque as duas ocorrências nem sempre ficam em linhas diferentes, e a
+    caixa da CONTRATADA costuma ter uma linha a menos (não tem "NOME
+    FANTASIA"), desalinhando o restante das linhas entre as duas colunas.
+
+    A abordagem aqui usa a POSIÇÃO horizontal (coluna de caractere) onde a
+    palavra "CONTRATADA" aparece no cabeçalho "CONTRATANTE   CONTRATADA"
+    para saber, em cada linha seguinte, a partir de qual coluna cortar o
+    texto — isolando só o conteúdo da caixa da direita (CONTRATADA) antes
+    de procurar "RAZÃO SOCIAL:" nele.
+    """
+    linhas = texto.split("\n")
+
+    coluna_contratada = None
+    indice_cabecalho = None
+    for i, linha in enumerate(linhas):
+        match_cabecalho = re.search(r"CONTRATANTE\s{2,}CONTRATADA\b", linha)
+        if match_cabecalho:
+            coluna_contratada = linha.index("CONTRATADA", match_cabecalho.start())
+            indice_cabecalho = i
+            break
+
+    if coluna_contratada is None:
+        return None
+
+    # Pequena margem para a esquerda: a posição da coluna varia alguns
+    # caracteres entre linhas (estimativa de largura de fonte do
+    # pdfplumber), sem risco de invadir o texto da CONTRATANTE, que fica
+    # bem mais à esquerda.
+    corte = max(coluna_contratada - 8, 0)
+
+    linhas_direita = []
+    for linha in linhas[indice_cabecalho + 1: indice_cabecalho + 15]:
+        if not linha.strip():
+            # caixa termina na primeira linha em branco após o cabeçalho
+            if linhas_direita:
+                break
+            continue
+        linhas_direita.append(linha[corte:])
+
+    bloco_contratada = "\n".join(linhas_direita)
+
+    match = re.search(
+        r"RAZ[ÃA]O\s+SOCIAL\s*:\s*(.+?)\s*\n\s*(?:CNPJ|NOME\s+FANTASIA|ENDERE[ÇC]O)\b",
+        bloco_contratada,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        valor = " ".join(match.group(1).split())
+        if valor:
+            return valor
+
+    return None
 
 
 def buscar_com_padroes_especiais(texto: str, campo: str):
@@ -474,6 +561,11 @@ def buscar_com_padroes_especiais(texto: str, campo: str):
     Agora usa a mesma comparação "aproximada" (parecido/normalizar) já usada
     no resto do script, então funciona mesmo com pequenas variações de texto.
     """
+    if parecido("Contratada", campo):
+        valor_coluna = _extrair_contratada_por_coluna(texto)
+        if valor_coluna:
+            return valor_coluna
+
     for chave, padroes in PADROES_ESPECIAIS.items():
         if not parecido(chave, campo):
             continue
