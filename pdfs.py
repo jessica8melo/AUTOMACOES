@@ -385,11 +385,14 @@ PADROES_ESPECIAIS = {
     ],
     "DGCO nº": [
         # \.? e :? extras: cobre "DGCO n.º", "DGCO nº:", "DGCO Nº :" etc.
-        r"DGCO\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)",
+        # (?:n[ºo°]?\.?)? — todo o grupo é opcional, não só o símbolo:
+        # sem isso, "n[ºo°]?" exige o "n" literal, e documentos que
+        # escrevem só "DGCO: 00733/2026" (sem "nº") nunca casavam.
+        r"DGCO\s*(?:n[ºo°]?\.?)?\s*:?\s*([\d./\-]+)",
     ],
     "OC Master nº": [
-        r"OC\s*Master\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)",
-        r"\bOC\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)",
+        r"OC\s*Master\s*(?:n[ºo°]?\.?)?\s*:?\s*([\d./\-]+)",
+        r"\bOC\s*(?:n[ºo°]?\.?)?\s*:?\s*([\d./\-]+)",
     ],
     # A modalidade não aparece como rótulo "Tipo de Contratação: ..." — ela
     # é o próprio cabeçalho repetido em toda página (ex.: "LICITAÇÃO
@@ -407,7 +410,7 @@ PADROES_ESPECIAIS = {
     # XX.XXX.XXX/XXXX-XX, denominada CONTRATADA". Interessa sempre o da
     # CONTRATADA (o fornecedor), nunca o da CONTRATANTE (BB Tecnologia).
     "CNPJ": [
-        r"CNPJ\s*n[ºo°]?\.?\s*:?\s*([\d./\-]+)\s*,?\s*(?:doravante\s+)?denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
+        r"CNPJ\s*(?:n[ºo°]?\.?)?\s*:?\s*([\d./\-]+)\s*,?\s*(?:doravante\s+)?denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
     ],
     # Nome/Razão Social do FORNECEDOR (a CONTRATADA), não o texto qualquer
     # que segue a palavra "CONTRATADA" no meio do contrato (ex.: cláusula
@@ -423,7 +426,7 @@ PADROES_ESPECIAIS = {
     # deste padrão em buscar_com_padroes_especiais).
     "Contratada": [
         r"([A-ZÀ-Ü][A-Za-zÀ-ÿ0-9°º\.,'&/\-\s]{2,120}?),?\s*(?:pessoa\s+jur[íi]dica[^,]{0,80},)?\s*"
-        r"(?:inscrita|estabelecida)[^,]{0,80}?CNPJ\s*n[ºo°]?\.?\s*:?\s*[\d./\-]+\s*,?\s*"
+        r"(?:inscrita|estabelecida)[^,]{0,80}?CNPJ\s*(?:n[ºo°]?\.?)?\s*:?\s*[\d./\-]+\s*,?\s*"
         r"(?:doravante\s+)?denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
     ],
     # Aparece como cabeçalho no topo do documento: "Nota Técnica - 2022/0263"
