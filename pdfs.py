@@ -424,7 +424,15 @@ PADROES_ESPECIAIS = {
     # diretamente por esse trecho, em vez do rótulo "Condições de
     # Pagamento:" seguido do parágrafo genérico.
     "Condições de Pagamento": [
-        r"pagament\w*.{0,250}?\bem\s+(?:at[ée]\s+)?(\d+\s*(?:\([^)]*\))?\s*dias\s+corridos)",
+        # Cobre as variações mais comuns de como o prazo aparece perto da
+        # palavra "pagamento": "em até 30 (trinta) dias corridos", "até o
+        # 15º (décimo quinto) dia do mês subsequente", ou só "em 30 dias"
+        # (sem "corridos"). A ideia (pedido do usuário): não trazer a
+        # primeira frase do parágrafo de "Condições de Pagamento" — ir
+        # direto no primeiro trecho que fala de PRAZO em dias.
+        r"pagament\w*.{0,300}?\b(?:em|at[ée])\s+(?:at[ée]\s+)?(?:o\s+)?(\d+\s*[ºo°]?\s*(?:\([^)]*\))?\s*dias?(?:\s+corridos)?(?:\s+do\s+m[êe]s\s+subsequente)?)",
+        # Fallback: "dias corridos" que aparece perto de "emissão da nota
+        # fiscal"/"conclusão de", mesmo sem a palavra "pagamento" por perto.
         r"(\d+\s*(?:\([^)]*\))?\s*dias\s+corridos)(?=.{0,150}?(?:emiss[ãa]o\s+da\s+nota\s+fiscal|conclus[ãa]o\s+d[eas]))",
     ],
     # Em aditivos de repactuação, o valor total aparece na frase "O valor
