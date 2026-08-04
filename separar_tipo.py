@@ -37,8 +37,44 @@ def classificar(tipo: str) -> str:
     return "Outro"
 
 
-def escrever_aba(wb, nome_aba, headers, linhas, col_valor_idx=None):
-    """Cria (ou recria) uma aba, escreve o cabeçalho estilizado e as linhas."""
+def localizar_bloco_ob(ws_origem):
+    """Procura, na linha de cabeçalho, colunas chamadas 'OB' e 'VALOR' (nessa
+    ordem, lado a lado) e devolve (headers, linhas) desse bloco, ou (None, None)
+    se não encontrar. Independe da posição exata das colunas na planilha."""
+    header_row = ws_origem[1]
+    col_ob = None
+    for cell in header_row:
+        if cell.value and str(cell.value).strip().upper() == "OB":
+            col_ob = cell.column
+            break
+    if col_ob is None:
+        return None, None
+
+    col_valor = col_ob + 1
+    valor_titulo = ws_origem.cell(row=1, column=col_valor).value
+    if not valor_titulo or str(valor_titulo).strip().upper() != "VALOR":
+        return None, None
+
+    headers = [ws_origem.cell(row=1, column=col_ob).value,
+               ws_origem.cell(row=1, column=col_valor).value]
+
+    linhas = []
+    for r in range(2, ws_origem.max_row + 1):
+        v_ob = ws_origem.cell(row=r, column=col_ob).value
+        v_valor = ws_origem.cell(row=r, column=col_valor).value
+        if v_ob is None and v_valor is None:
+            continue
+        linhas.append((v_ob, v_valor))
+
+    return headers, linhas
+
+
+def escrever_aba(wb, nome_aba, headers, linhas, col_valor_idx=None, bloco_extra=None):
+    """Cria (ou recria) uma aba, escreve o cabeçalho estilizado e as linhas.
+
+    bloco_extra (opcional): tupla (headers_extra, linhas_extra, coluna_inicial)
+    escrita ao lado da tabela principal, com uma coluna de espaço entre elas.
+    """
     if nome_aba in wb.sheetnames:
         del wb[nome_aba]
     ws = wb.create_sheet(nome_aba)
@@ -70,6 +106,31 @@ def escrever_aba(wb, nome_aba, headers, linhas, col_valor_idx=None):
     for col, w in larguras.items():
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
+
+    if bloco_extra is not None:
+        headers_extra, linhas_extra, col_inicial = bloco_extra
+        for col_off, titulo in enumerate(headers_extra):
+            c = ws.cell(row=1, column=col_inicial + col_off, value=titulo)
+            c.font = HEADER_FONT
+            c.fill = HEADER_FILL
+            c.alignment = CENTER
+            c.border = BORDER
+
+        for r, linha in enumerate(linhas_extra, start=2):
+            for col_off, valor in enumerate(linha):
+                cell = ws.cell(row=r, column=col_inicial + col_off, value=valor)
+                cell.font = NORMAL_FONT
+                cell.border = BORDER
+                if col_off == 1:  # coluna VALOR
+                    cell.number_format = "#,##0.00"
+                    cell.alignment = RIGHT
+                else:
+                    cell.alignment = CENTER
+
+        letra_inicial = ws.cell(row=1, column=col_inicial).column_letter
+        ws.column_dimensions[letra_inicial].width = 14
+        ws.column_dimensions[ws.cell(row=1, column=col_inicial + 1).column_letter].width = 14
+
     return ws
 
 
@@ -95,8 +156,15 @@ def main(caminho):
         else:
             outros.append(row)
 
+    headers_ob, linhas_ob = localizar_bloco_ob(ws_origem)
+    bloco_ob = None
+    if headers_ob is not None:
+        # deixa uma coluna de espaço (H) após a tabela principal (A:G)
+        col_inicial_ob = len(headers) + 2  # 7 colunas + 1 de espaço + 1 = 9 (col I)
+        bloco_ob = (headers_ob, linhas_ob, col_inicial_ob)
+
     escrever_aba(wb, "Recebimentos", headers, recebimentos, col_valor_idx=5)
-    escrever_aba(wb, "Pagamentos", headers, pagamentos, col_valor_idx=5)
+    escrever_aba(wb, "Pagamentos", headers, pagamentos, col_valor_idx=5, bloco_extra=bloco_ob)
     if outros:
         escrever_aba(wb, "Outros", headers, outros, col_valor_idx=5)
 
@@ -106,6 +174,10 @@ def main(caminho):
     print(f"Pagamentos:   {len(pagamentos)} linhas")
     if outros:
         print(f"Outros:       {len(outros)} linhas (não classificados)")
+    if headers_ob is not None:
+        print(f"Bloco OB/VALOR: {len(linhas_ob)} linhas levadas para a aba Pagamentos")
+    else:
+        print("Bloco OB/VALOR: não encontrado na planilha de origem (colunas 'OB'/'VALOR' não localizadas)")
 
 
 if __name__ == "__main__":
