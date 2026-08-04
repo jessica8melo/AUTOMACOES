@@ -869,7 +869,7 @@ def verificar_assinatura(texto: str) -> dict:
 def processar_pdf(caminho_pdf: str, campos_procurados: list = None) -> dict:
     """
     `campos_procurados` permite passar uma lista de campos específica
-    (ex.: a combinação fluxo+documento decidida em main.py/doc_types.py)
+    (ex.: a combinação fluxo+documento decidida em arquivo.py/doc_types.py)
     em vez da lista fixa CAMPOS_PROCURADOS. Se omitido, usa a lista fixa
     (mantém o comportamento antigo para quem chama/roda este arquivo
     isoladamente).

@@ -19,14 +19,14 @@ e doc_types.identificar_documento, restringindo os candidatos aos
 documentos daquele fluxo específico.
 
 Uso:
-    python checklist.py caminho/da/pasta                        # forma recomendada:
+    python extracao.py caminho/da/pasta                        # forma recomendada:
                                                                   # o script acha sozinho o
                                                                   # arquivo de checklist dentro
                                                                   # da pasta e usa essa MESMA
                                                                   # pasta como anexos
-    python checklist.py "Checklists/FQ415-031_v10 - Checklist OC Padrão – Com Contrato.docx"
-    python checklist.py FQ415-031          # também aceita o código direto
-    python checklist.py FQ415-031 caminho/da/pasta/de/anexos   # pasta alternativa (padrão: "Anexos")
+    python extracao.py "Checklists/FQ415-031_v10 - Checklist OC Padrão – Com Contrato.docx"
+    python extracao.py FQ415-031          # também aceita o código direto
+    python extracao.py FQ415-031 caminho/da/pasta/de/anexos   # pasta alternativa (padrão: "Anexos")
 """
 
 import os
@@ -36,7 +36,7 @@ import zipfile
 
 import doc_types
 import fluxos
-import main as automacao_main
+import arquivo as automacao_main
 import pdfs
 import tabelas
 
@@ -251,9 +251,9 @@ def executar_checklist(id_fluxo: str, pasta_anexos: str = PASTA_ANEXOS_PADRAO,
 
 def main():
     if len(sys.argv) not in (2, 3):
-        print("Uso: python checklist.py caminho/da/pasta")
-        print("     python checklist.py caminho/do/checklist.docx [pasta/de/anexos]")
-        print("     python checklist.py FQ415-031 [pasta/de/anexos]")
+        print("Uso: python extracao.py caminho/da/pasta")
+        print("     python extracao.py caminho/do/checklist.docx [pasta/de/anexos]")
+        print("     python extracao.py FQ415-031 [pasta/de/anexos]")
         print(f"     (se omitida, a pasta de anexos padrão é '{PASTA_ANEXOS_PADRAO}')")
         sys.exit(1)
 

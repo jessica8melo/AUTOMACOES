@@ -16,19 +16,6 @@ from difflib import SequenceMatcher
 import openpyxl
 
 # ---------------------------------------------------------------------------
-# Campos que devem ser buscados na planilha.
-# Adicione, remova ou edite livremente.
-# ---------------------------------------------------------------------------
-CAMPOS_PROCURADOS = [
-    "Unidade de Medida",
-    "Quantidade do Item",
-    "Valor Preço Unitário",
-    "UOR",
-    "Conta Contábil",
-]
-
-
-# ---------------------------------------------------------------------------
 # Utilidades de normalização e comparação "aproximada" de texto
 # (mesma lógica usada no script de busca em PDF)
 # ---------------------------------------------------------------------------
@@ -197,7 +184,7 @@ def aplicar_processamento_especial(campo, valores):
 
 
 # ---------------------------------------------------------------------------
-# Função reutilizável (chamada pelo main.py e também usável via CLI)
+# Função reutilizável (chamada pelo arquivo.py e também usável via CLI)
 # ---------------------------------------------------------------------------
 def processar_xlsx(caminho_xlsx: str, campos_procurados: list = None) -> dict:
     """
@@ -207,7 +194,7 @@ def processar_xlsx(caminho_xlsx: str, campos_procurados: list = None) -> dict:
     Lança exceção se o arquivo não puder ser aberto/lido.
 
     `campos_procurados` permite passar uma lista de campos específica
-    (ex.: a combinação fluxo+documento decidida em main.py/doc_types.py)
+    (ex.: a combinação fluxo+documento decidida em arquivo.py/doc_types.py)
     em vez da lista fixa CAMPOS_PROCURADOS. Se omitido, usa a lista fixa
     (mantém o comportamento antigo para quem chama/roda este arquivo
     isoladamente).

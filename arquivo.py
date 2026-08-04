@@ -17,8 +17,8 @@ Etapas do script:
        campos por parâmetro.
 
 Uso:
-    python main.py caminho/do/arquivo.pdf
-    python main.py caminho/da/pasta
+    python arquivo.py caminho/do/arquivo.pdf
+    python arquivo.py caminho/da/pasta
 """
 
 import os
@@ -167,8 +167,8 @@ def processar_pasta(caminho_pasta: str) -> None:
 
 def main():
     if len(sys.argv) != 2:
-        print("Uso: python main.py caminho/do/arquivo.pdf")
-        print("     python main.py caminho/da/pasta")
+        print("Uso: python arquivo.py caminho/do/arquivo.pdf")
+        print("     python arquivo.py caminho/da/pasta")
         sys.exit(1)
 
     caminho = sys.argv[1]

@@ -121,10 +121,10 @@ def campos_do_documento(id_fluxo: str, tipo_documento: str) -> list:
     Nota Técnica, FQ415-075, Projeto Básico, Solicitação de Entrega etc.)
     passa pela checagem de assinatura, e não só os que não têm campo
     nenhum (FQ412-034, FQ412-035, Ata/Boleto do Condomínio). Quem decide
-    se a assinatura É de fato conferível é checklist.py: PDFs são
+    se a assinatura É de fato conferível é extracao.py: PDFs são
     checados de verdade (pdfs.verificar_assinatura); planilhas apenas
     avisam que a conferência não se aplica e deve ser feita manualmente
-    (ver processar_documento_anexo em checklist.py).
+    (ver processar_documento_anexo em extracao.py).
     """
     if tipo_documento not in documentos_do_fluxo(id_fluxo):
         return []
