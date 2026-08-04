@@ -10,24 +10,37 @@ Clicksign, Aprovve).
 
 ## Como funciona
 
-> **Nota:** por enquanto o projeto foca só na **extração de dados dos
-> documentos**. A parte de fluxos/checklists (`fluxos.py`) fica pausada
-> para depois — o `main.py` não pergunta mais qual fluxo está sendo
-> aplicado, ele identifica o documento e extrai seus campos direto.
+O projeto tem dois pontos de entrada, dependendo do que você quer fazer:
 
-- **`main.py`** — ponto de entrada. Recebe o caminho de um arquivo (ou de uma
-  pasta), identifica o tipo real do arquivo pelos bytes iniciais (não só
-  pela extensão) e qual DOCUMENTO ele é (Contrato, FQ415-075, Nota
+- **`arquivo.py`** — trata **um documento por vez** (ou uma pasta de
+  documentos avulsos, processados um a um). Recebe o caminho de um arquivo
+  ou de uma pasta, identifica o tipo real do arquivo pelos bytes iniciais
+  (não só pela extensão) e qual DOCUMENTO ele é (Contrato, FQ415-075, Nota
   Técnica, Projeto Básico, Solicitação de Entrega — ver `documentos.py`),
   usando `doc_types.py`. Em seguida busca só os campos daquele documento
   e encaminha para o script certo:
   - PDF → `pdfs.py`
   - XLSX/XLSM/XLS → `tabelas.py`
+- **`extracao.py`** — roda o **fluxo completo de checklist**: recebe o
+  documento de checklist (`.docx`) que está sendo aplicado, identifica a
+  qual fluxo ele pertence (`fluxos.py`) e, para cada documento esperado por
+  esse checklist, localiza automaticamente o(s) arquivo(s) correspondente(s)
+  dentro da pasta de anexos e extrai os campos de cada um — reaproveitando
+  `arquivo.py` (para identificar tipo/documento de cada anexo) e
+  `pdfs.py`/`tabelas.py` (para extrair os dados). No fim, também aponta
+  documentos esperados que não foram encontrados e arquivos da pasta que não
+  bateram com nenhum documento do checklist.
+
+Módulos de apoio, usados pelos dois pontos de entrada acima:
+
 - **`documentos.py`** — lista os documentos reconhecidos e, para cada um,
   os campos que devem ser extraídos. É o único lugar que você precisa
   editar para adicionar/remover/renomear campos de um documento.
 - **`doc_types.py`** — identifica qual documento um arquivo representa,
   combinando indícios do nome do arquivo com indícios do texto/conteúdo.
+- **`fluxos.py`** — define os fluxos/checklists (ex.: `FQ415-031`), quais
+  documentos cada um exige e quais campos (ou conferência de assinatura)
+  são esperados de cada documento dentro daquele fluxo.
 - **`pdfs.py`** — abre o PDF com `pdfplumber`, extrai texto e tabelas, e
   procura os campos definidos em `CAMPOS_PROCURADOS` dentro do arquivo.
   Quando uma página não tem texto extraível (ex.: certificados de assinatura
@@ -37,10 +50,10 @@ Clicksign, Aprovve).
   a linha de cabeçalho da tabela (comparando com `CAMPOS_PROCURADOS`) e lê os
   valores de cada linha de dados abaixo dela.
 
-Em ambos os scripts, a comparação entre o nome de um campo procurado e o
-texto do documento é **aproximada** (tolera acentos, maiúsculas/minúsculas,
-pequenas variações de escrita, parênteses), não exige que o texto seja
-idêntico.
+Em ambos os scripts de extração (`pdfs.py`/`tabelas.py`), a comparação entre
+o nome de um campo procurado e o texto do documento é **aproximada** (tolera
+acentos, maiúsculas/minúsculas, pequenas variações de escrita, parênteses),
+não exige que o texto seja idêntico.
 
 ## Pré-requisitos
 
@@ -79,24 +92,47 @@ pip install -r requirements.txt
 
 ## Como rodar
 
+### `arquivo.py` — um documento por vez
+
 **Um arquivo específico:**
 ```bash
-python main.py Anexos/DGCO_Nº_027322025.pdf
-python main.py "Anexos/FQ415-075_v_03_-_GMS_-_LOTE 4_-__02732-2025_-_v2_(1).xlsx"
+python arquivo.py Anexos/DGCO_Nº_027322025.pdf
+python arquivo.py "Anexos/FQ415-075_v_03_-_GMS_-_LOTE 4_-__02732-2025_-_v2_(1).xlsx"
 ```
 
-**Uma pasta inteira** (processa todos os arquivos dentro dela, em ordem
-alfabética, e imprime um resumo no final):
+**Uma pasta inteira** (processa todos os arquivos dentro dela, um a um, em
+ordem alfabética, e imprime um resumo no final):
 ```bash
-python main.py Anexos
+python arquivo.py Anexos
 ```
 
-**Rodar um dos scripts direto**, sem passar pelo `main.py` (útil para testar
-isoladamente):
+**Rodar um dos scripts direto**, sem passar pelo `arquivo.py` (útil para
+testar isoladamente):
 ```bash
 python pdfs.py Anexos/DGCO_Nº_027322025.pdf
 python tabelas.py "Anexos/FQ415-075_v_03_-_GMS_-_LOTE 4_-__02732-2025_-_v2_(1).xlsx"
 ```
+
+### `extracao.py` — fluxo completo de checklist
+
+**Forma recomendada** — passe a pasta que contém o `.docx` do checklist
+junto com seus anexos; o script acha o checklist sozinho e usa essa mesma
+pasta como pasta de anexos:
+```bash
+python extracao.py Checklists
+```
+
+**Passando o checklist e a pasta de anexos separadamente:**
+```bash
+python extracao.py "Checklists/FQ415-031_v10 - Checklist OC Padrão – Com Contrato.docx" Anexos
+```
+
+**Passando o código do fluxo direto** (sem precisar do arquivo `.docx`):
+```bash
+python extracao.py FQ415-031 Anexos
+```
+
+Se a pasta de anexos for omitida, o padrão é `Anexos`.
 
 ### Exemplo de saída (PDF)
 
@@ -126,10 +162,6 @@ Os campos de cada documento ficam em `documentos.py` (dicionário
 campos de qualquer um dos 5 documentos reconhecidos (Contrato,
 FQ415-075, Nota Técnica, Projeto Básico, Solicitação de Entrega).
 
-`pdfs.py` e `tabelas.py` também têm sua própria lista `CAMPOS_PROCURADOS`
-no topo do arquivo, usada só quando você roda um deles isoladamente (sem
-passar pelo `main.py`) — ver seção anterior.
-
 Para PDFs, alguns campos que não aparecem como "Rótulo: valor" (como "DGCO
 nº", "OC Master nº" e "Data do fornecimento") usam expressões regulares
 próprias em `PADROES_ESPECIAIS`, dentro de `pdfs.py`.
@@ -152,10 +184,13 @@ da função `parecido()` (padrão: `0.72`; quanto menor, mais tolerante).
 
 ```
 automacao-checklist/
-├── main.py             # ponto de entrada, detecta tipo e encaminha
-├── pdfs.py              # extração de campos e assinatura em PDFs
-├── tabelas.py            # extração de campos em planilhas xlsx
-├── requirements.txt       # dependências Python
-├── Anexos/                # exemplos de arquivos para teste
+├── arquivo.py          # ponto de entrada para UM único arquivo
+├── doc_types.py        # identifica QUAL documento um arquivo representa
+├── documentos.py       # documentos reconhecidos e campos a extrair de cada um
+├── extracao.py         # ponto de entrada do fluxo "checklist"
+├── fluxos.py           # definição dos fluxos (checklists) de conferência de documentos
+├── pdfs.py             # extração de campos e assinatura em PDFs
+├── tabelas.py          # extração de campos em planilhas xlsx
+├── requirements.txt    # dependências Python
 └── README.md
 ```

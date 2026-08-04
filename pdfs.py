@@ -3,9 +3,6 @@
 Busca campos específicos dentro de um documento PDF, incluindo campos que
 estão organizados em tabelas (com cabeçalhos quebrados em mais de uma linha)
 e campos soltos no meio do texto.
-
-Uso:
-    python buscar_campos_pdf_v2.py caminho/do/arquivo.pdf
 """
 
 import sys
@@ -17,15 +14,6 @@ from difflib import SequenceMatcher
 import pdfplumber
 import pypdf
 
-# O pdfminer (usado por baixo dos panos pelo pdfplumber) solta avisos no log
-# quando encontra comandos de cor "estranhos" dentro do PDF — o caso mais
-# comum é um preenchimento com PADRÃO (Pattern), tipo "/P1 scn", que ele
-# tenta (sem sucesso) interpretar como um número de nível de cinza: "Cannot
-# set non-stroke color: '/P1' is an invalid float value". Isso é só um
-# aviso — o pdfminer ignora aquele comando específico e segue extraindo o
-# resto do texto/tabelas normalmente — mas polui a saída do checklist sem
-# agregar nada útil. Por isso o logger do pdfminer fica restrito a ERROR
-# (avisos/warnings deixam de ser exibidos; erros de verdade continuam).
 logging.getLogger("pdfminer").setLevel(logging.ERROR)
 
 try:
@@ -34,18 +22,11 @@ try:
     import pytesseract
     OCR_DISPONIVEL = True
 
-    # No Windows o Tesseract não entra no PATH sozinho (diferente do
-    # macOS/Linux via brew/apt). Se o binário configurado não for
-    # encontrado, tenta os locais padrão do instalador oficial antes de
-    # desistir — assim não é preciso mexer manualmente na variável PATH.
     if platform.system() == "Windows":
         caminhos_padrao = [
             r"C:\Program Files\Tesseract-OCR\tesseract.exe",
             r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
         ]
-        # Instalação sem privilégio de administrador (comum quando o
-        # instalador é rodado sem permissão para gravar em Program Files)
-        # cai em AppData\Local do usuário logado.
         local_appdata = os.environ.get("LOCALAPPDATA")
         if local_appdata:
             caminhos_padrao.append(
@@ -57,22 +38,6 @@ try:
                 break
 except ImportError:
     OCR_DISPONIVEL = False
-
-# ---------------------------------------------------------------------------
-# Campos que devem ser buscados no documento.
-# Adicione, remova ou edite livremente.
-# ---------------------------------------------------------------------------
-CAMPOS_PROCURADOS = [
-    "Valor total da solicitação",
-    "Qtde",
-    "Data do fornecimento",
-    "Código",
-    "Especificação do Bem",
-    "Preço (s) unitário (s) (R$)",
-    "DGCO nº",
-    "Empresa",
-    "OC Master nº"
-]
 
 
 # ---------------------------------------------------------------------------
@@ -120,16 +85,7 @@ def parecido(a: str, b: str, limite: float = 0.72) -> bool:
     if len(curto) >= 4 and curto in longo:
         if len(curto.split()) >= 2 or len(curto) / len(longo) >= 0.5:
             return True
-    # Fallback por similaridade "solta" (SequenceMatcher): sem a checagem
-    # de "contém" acima, esse fallback é o único critério restante, e ele
-    # compara só a SEQUÊNCIA DE LETRAS — não o significado. Isso faz pares
-    # de palavras curtas e completamente diferentes no sentido, mas
-    # parecidas na grafia, colidirem (ex.: "Unidade" x "Quantidade" tem
-    # ratio ~0.82, folgadamente acima do limite antigo de 0.72, mas uma é
-    # "unit" e a outra é "quantity" — nada a ver uma com a outra). Por
-    # isso o limite do fallback é mais rígido (0.85) do que o usado para a
-    # checagem de "contém" acima, que já garante por si só as variações
-    # mais comuns (plural/singular, rótulo composto etc.).
+    
     return SequenceMatcher(None, na, nb).ratio() >= max(limite, 0.85)
 
 
@@ -177,11 +133,7 @@ def ocr_pagina(pagina, resolucao: int = 200) -> str:
 def _nao_eh_marca_dagua(obj) -> bool:
     """
     Usado em pagina.filter(...) para IGNORAR a marca d'água diagonal de
-    rastreamento (ex.: e-mail de quem baixou o PDF + data/hora, repetida
-    várias vezes na página, levemente rotacionada). Ela é impressa num
-    cinza bem claro (quase branco) e seus caracteres acabam entrelaçados
-    com o texto real na mesma região, embaralhando a extração (ex.:
-    "Nota Técnica - 2022/0263" saindo como "m/-/1/2/9a/0/...").
+    rastreamento.
 
     Devolve True para manter o objeto (texto normal) e False para
     descartá-lo (marca d'água). Só mexe em caracteres — outros objetos
@@ -194,13 +146,7 @@ def _nao_eh_marca_dagua(obj) -> bool:
         return True
     return not all(abs(c - 0.85882) < 0.02 for c in cor[:3])
 
-
-# Área mínima (largura x altura, em pontos PDF) para uma imagem ser
-# considerada "grande o bastante para ser um carimbo de assinatura".
-# Escolhida para pegar carimbos típicos (ex.: 373x288 = ~107k) e ignorar
-# logos/cabeçalhos finos de página (ex.: 146x17 = ~2.5k).
 AREA_MINIMA_IMAGEM_CARIMBO = 5000
-
 
 def _pagina_tem_imagem_grande(pagina, area_minima: float = AREA_MINIMA_IMAGEM_CARIMBO) -> bool:
     """
@@ -226,15 +172,6 @@ def extrair_texto(caminho_pdf: str) -> str:
         for pagina in pdf.pages:
             pagina_limpa = pagina.filter(_nao_eh_marca_dagua)
             texto_pagina = pagina_limpa.extract_text(layout=True) or ""
-            # Antes, o OCR só rodava quando a página inteira tinha pouco
-            # texto (< 200 caracteres), assumindo que era uma página
-            # "só imagem". Isso deixava passar carimbos de assinatura
-            # (ex.: selo do Adobe Acrobat/certificado digital) em páginas
-            # que já têm bastante texto normal (valores, cláusulas etc.) —
-            # o carimbo é só mais uma imagem na página, e seu texto nunca
-            # é lido. Agora também rodamos OCR quando há uma imagem grande
-            # o suficiente para ser um carimbo, mesmo com texto normal
-            # abundante na página.
             precisa_ocr = pagina.images and (
                 len(texto_pagina.strip()) < 200 or _pagina_tem_imagem_grande(pagina)
             )
@@ -320,22 +257,7 @@ def mapear_campos_em_tabela(tabela):
 
 def buscar_em_tabelas(tabelas, campo: str):
     """
-    ANTES: retornava assim que achasse a PRIMEIRA tabela (na ordem em que
-    aparecem no PDF) com um rótulo/cabeçalho parecido com `campo`. Isso
-    funciona bem quando o rótulo é específico o bastante para só existir
-    de fato num lugar (ex.: "DGCO", "OC Master"). Mas para um rótulo curto
-    e genérico como "Quantidade" — que reaparece em várias tabelas
-    completamente diferentes e sem relação entre si dentro do mesmo PDF
-    (ex., num contrato de limpeza: quantidade de lixeiras no anexo de
-    acessórios, quantidade de salas no dimensionamento do prédio,
-    quantidade de cada material de limpeza etc.) — "a primeira tabela que
-    bater" é essencialmente aleatória: depende só da ordem das páginas,
-    não de qual delas é realmente "a quantidade do contrato". Foi assim
-    que "Quantidade" acabou virando "64" (quantidade de um item de uma
-    tabela de acessórios, nº de página, sem nenhuma relação com o
-    contrato em si).
-
-    AGORA: primeiro reúne TODOS os valores encontrados no documento
+    Reúne TODOS os valores encontrados no documento
     inteiro para esse campo. Se todos forem iguais (o mesmo valor
     aparecendo em mais de uma tabela, ou uma única tabela batendo), o
     valor é devolvido normalmente — não há ambiguidade real. Mas se
@@ -367,21 +289,6 @@ def buscar_em_tabelas(tabelas, campo: str):
 
 def buscar_em_texto(texto: str, campo: str):
     campo_escapado = re.escape(campo)
-
-    # IMPORTANTE: o valor de um campo às vezes quebra de linha no meio da
-    # extração do PDF (ex.: "...Suporte Técnico: não se\n      aplica."),
-    # porque pdfplumber preserva o layout visual da página. Sem DOTALL, "."
-    # não cruza "\n" e o valor saía cortado ("não se", perdendo "aplica.").
-    # Por isso agora o valor pode continuar por mais linhas, mas para no
-    # primeiro sinal claro de que acabou: uma linha em branco, ou o início
-    # do próximo item numerado (ex.: "9.", "10.1", "2.3.2.1.4.2"), ou o fim
-    # do texto — o que vier primeiro.
-    # \b nas duas pontas: sem isso, um campo curto como "UOR" também
-    # "casava" como SUBSTRING dentro de qualquer palavra que contivesse
-    # essas letras em sequência (ex.: "LÍQUOR", em "...VÍRUS HERPES 6
-    # LÍQUOR - IGG/IGM..." — nada a ver com o campo UOR do documento) e
-    # aí o valor capturado era o que viesse depois do "-", uma lista de
-    # exames sem relação nenhuma com o campo procurado.
     padrao_mesma_linha = re.compile(
         rf"\b{campo_escapado}\b\s*[:\-]\s*(.+?)"
         rf"(?=\n\s*\n|\n\s*\d+(?:\.\d+)*[\.\)]|\n\s*[A-ZÀ-Ý][^\n:]{{0,80}}:|\Z)",
@@ -409,15 +316,6 @@ PADROES_ESPECIAIS = {
         r"assinad[ao].{0,60}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
         r"firmad[ao].{0,60}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
     ],
-    # A "Data do contrato" nunca aparece como rótulo solto ("Data do
-    # contrato: ..."). Em Contratos, costuma vir na fórmula de fecho
-    # ("...e assinam o presente contrato em DD de mês de AAAA..."). Em
-    # Aditivos, o contrato original já está em vigor — a data que importa
-    # é a de celebração do PRIMITIVO, citada na cláusula de Ratificação
-    # ("...contrato de prestação de serviços... celebrado pelas partes em
-    # 17 de março de 2022 e seus respectivos aditivos..."). Por isso os
-    # padrões abaixo cobrem tanto "celebrado em" (Aditivos) quanto
-    # "firmado/assinado em" (Contratos), nessa ordem de prioridade.
     "Data do contrato": [
         r"celebrad[ao]\s+pelas\s+partes\s+em\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4})",
         r"celebrad[ao].{0,80}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
@@ -426,20 +324,12 @@ PADROES_ESPECIAIS = {
         r"firmad[ao].{0,60}?\bem\s+(?=\d)(\d{1,2}\s+de\s+[^\W\d_]+\s+de\s+\d{4}|\d{1,2}/\d{1,2}/\d{2,4})",
     ],
     "DGCO nº": [
-        # \.? e :? extras: cobre "DGCO n.º", "DGCO nº:", "DGCO Nº :" etc.
-        # (?:n[ºo°]?\.?)? — todo o grupo é opcional, não só o símbolo:
-        # sem isso, "n[ºo°]?" exige o "n" literal, e documentos que
-        # escrevem só "DGCO: 00733/2026" (sem "nº") nunca casavam.
         r"DGCO\s*(?:n[ºo°]?\.?)?\s*:?\s*([\d./\-]+)",
     ],
     "OC Master nº": [
         r"OC\s*Master\s*(?:n[ºo°]?\.?)?\s*:?\s*([\d./\-]+)",
         r"\bOC\s*(?:n[ºo°]?\.?)?\s*:?\s*([\d./\-]+)",
     ],
-    # A modalidade não aparece como rótulo "Tipo de Contratação: ..." — ela
-    # é o próprio cabeçalho repetido em toda página (ex.: "LICITAÇÃO
-    # ELETRÔNICA Nº 2022/04"). Captura só o nome da modalidade, sem o
-    # número, mesmo que ele venha logo depois no texto.
     "Tipo de Contratação": [
         r"\b(LICITA[ÇC][ÃA]O\s+ELETR[ÔO]NICA|LICITA[ÇC][ÃA]O\s+PRESENCIAL"
         r"|PREG[ÃA]O\s+ELETR[ÔO]NICO|PREG[ÃA]O\s+PRESENCIAL"
@@ -447,74 +337,21 @@ PADROES_ESPECIAIS = {
         r"|CONCORR[ÊE]NCIA|TOMADA\s+DE\s+PRE[ÇC]OS|CONVITE"
         r"|CONTRATA[ÇC][ÃA]O\s+DIRETA|ATA\s+DE\s+REGISTRO\s+DE\s+PRE[ÇC]OS)\b",
     ],
-    # O contrato sempre cita 2 CNPJs (CONTRATANTE e CONTRATADA), na mesma
-    # frase de qualificação das partes: "... inscrita no CNPJ nº
-    # XX.XXX.XXX/XXXX-XX, denominada CONTRATADA". Interessa sempre o da
-    # CONTRATADA (o fornecedor), nunca o da CONTRATANTE (BB Tecnologia).
     "CNPJ": [
         r"CNPJ\s*(?:n[ºo°]?\.?)?\s*:?\s*([\d./\-]+)\s*,?\s*(?:doravante\s+)?denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
     ],
-    # Nome/Razão Social do FORNECEDOR (a CONTRATADA), não o texto qualquer
-    # que segue a palavra "CONTRATADA" no meio do contrato (ex.: cláusula
-    # de pagamento "A CONTRATANTE pagará à CONTRATADA:" — isso NÃO é o
-    # nome da empresa, mas a busca genérica por rótulo "Contratada:"
-    # casava justamente com essa cláusula, por ser a primeira ocorrência
-    # de "CONTRATADA" seguida de dois-pontos no texto).
-    #
-    # Fórmula clássica de qualificação: "<empresa>, ..., inscrita no CNPJ
-    # nº XX.XXX.XXX/XXXX-XX, ... denominada CONTRATADA". Cobre contratos
-    # em texto corrido (fora do modelo de caixas lado a lado da BBTS, que
-    # é tratado à parte por _extrair_contratada_por_coluna, chamada antes
-    # deste padrão em buscar_com_padroes_especiais).
     "Contratada": [
         r"([A-ZÀ-Ü][A-Za-zÀ-ÿ0-9°º\.,'&/\-\s]{2,120}?),?\s*(?:pessoa\s+jur[íi]dica[^,]{0,80},)?\s*"
         r"(?:inscrita|estabelecida)[^,]{0,80}?CNPJ\s*(?:n[ºo°]?\.?)?\s*:?\s*[\d./\-]+\s*,?\s*"
         r"(?:doravante\s+)?denominad[ao]\s+(?:a\s+)?CONTRATADA\b",
     ],
-    # Aparece como cabeçalho no topo do documento: "Nota Técnica - 2022/0263"
     "Número da Nota Técnica": [
         r"Nota\s+T[ée]cnica\s*[-–]\s*(\d{4}\s*/\s*\d+)",
     ],
-    # O campo "Condições de Pagamento" não deve trazer o parágrafo inteiro
-    # do item "10. Condições de Pagamento" (que normalmente só descreve o
-    # rito/gatilho do pagamento, ex.: "ao final de cada etapa"). O que
-    # interessa é o PRAZO em dias corridos citado em algum ponto do texto
-    # próximo à palavra "pagamento" (ex.: "...será realizado em até 30
-    # (trinta) dias corridos..." ou "...em 30 (trinta) dias corridos, a
-    # contar da emissão da Nota Fiscal..."). Por isso este campo tem
-    # prioridade especial (ver CAMPOS_PRIORIDADE_ESPECIAL) e busca
-    # diretamente por esse trecho, em vez do rótulo "Condições de
-    # Pagamento:" seguido do parágrafo genérico.
     "Condições de Pagamento": [
-        # Cobre as variações mais comuns de como o prazo aparece perto da
-        # palavra "pagamento": "em até 30 (trinta) dias corridos", "até o
-        # 15º (décimo quinto) dia do mês subsequente", ou só "em 30 dias"
-        # (sem "corridos"). A ideia (pedido do usuário): não trazer a
-        # primeira frase do parágrafo de "Condições de Pagamento" — ir
-        # direto no primeiro trecho que fala de PRAZO em dias.
         r"pagament\w*.{0,300}?\b(?:em|at[ée])\s+(?:at[ée]\s+)?(?:o\s+)?(\d+\s*[ºo°]?\s*(?:\([^)]*\))?\s*dias?(?:\s+corridos)?(?:\s+do\s+m[êe]s\s+subsequente)?)",
-        # Fallback: "dias corridos" que aparece perto de "emissão da nota
-        # fiscal"/"conclusão de", mesmo sem a palavra "pagamento" por perto.
         r"(\d+\s*(?:\([^)]*\))?\s*dias\s+corridos)(?=.{0,150}?(?:emiss[ãa]o\s+da\s+nota\s+fiscal|conclus[ãa]o\s+d[eas]))",
     ],
-    # Em aditivos de repactuação, o valor total aparece na frase "O valor
-    # total do contrato passará de R$ X para o valor total de R$ Y" — o
-    # que interessa é sempre o valor NOVO (Y, depois do "para"), nunca o
-    # valor antigo que vem antes dele na mesma frase. Por isso tem
-    # prioridade especial (ver CAMPOS_PRIORIDADE_ESPECIAL): a busca
-    # genérica por rótulo pegaria o primeiro "R$ ..." que aparece perto de
-    # "valor total", que costuma ser justamente o valor antigo.
-    # O segundo padrão cobre contratos sem repactuação, onde o valor total
-    # só aparece uma vez ("no valor total de R$ X" / "valor total é de
-    # R$ X" / "valor total estimado de até R$ X" / "perfazendo o valor
-    # total de até R$ X"). Antes o padrão exigia literalmente "é" ou
-    # "será" logo antes de "de R$", e "de R$" colado (sem nada entre
-    # eles) — por isso não casava com frases que inserem "estimado" antes
-    # do "de", ou "até" entre o "de" e o "R$" (ambos muito comuns em
-    # contratos que falam em valor "estimado"/"teto", como "cobraremos o
-    # valor total estimado de até R$ 1.800.000,00" ou "perfazendo o valor
-    # total de até R$ 1.800.000,00"). Agora "é/será" e "estimado" são
-    # opcionais, e "até" entre "de" e "R$" também é aceito.
     "Valor total": [
         r"valor\s+total\s+do\s+contrato\s+passar[áa]\s+de\s+R\$\s*[\d.,]+\s+para\s+(?:o\s+valor\s+total\s+de\s+)?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
         r"(?:no\s+)?valor\s+total\s+(?:do\s+contrato\s+)?(?:estimado\s+)?(?:(?:[ée]|ser[áa])\s+)?de\s+(?:at[ée]\s+)?R\$\s*(\d{1,3}(?:\.\d{3})*,\d{2})",
@@ -532,11 +369,6 @@ PADROES_ESPECIAIS = {
 CAMPOS_PRIORIDADE_ESPECIAL = {
     "Condições de Pagamento",
     "Valor total",
-    # Sem isso, a busca genérica por rótulo "Contratada: ..." casa com a
-    # primeira ocorrência de "CONTRATADA" seguida de ":" no texto — que
-    # normalmente é a cláusula de pagamento ("A CONTRATANTE pagará à
-    # CONTRATADA:"), não a qualificação das partes. Ver padrão especial
-    # "Contratada" em PADROES_ESPECIAIS.
     "Contratada",
 }
 
@@ -575,16 +407,11 @@ def _extrair_contratada_por_coluna(texto: str):
     if coluna_contratada is None:
         return None
 
-    # Pequena margem para a esquerda: a posição da coluna varia alguns
-    # caracteres entre linhas (estimativa de largura de fonte do
-    # pdfplumber), sem risco de invadir o texto da CONTRATANTE, que fica
-    # bem mais à esquerda.
     corte = max(coluna_contratada - 8, 0)
 
     linhas_direita = []
     for linha in linhas[indice_cabecalho + 1: indice_cabecalho + 15]:
         if not linha.strip():
-            # caixa termina na primeira linha em branco após o cabeçalho
             if linhas_direita:
                 break
             continue
@@ -607,11 +434,7 @@ def _extrair_contratada_por_coluna(texto: str):
 
 def buscar_com_padroes_especiais(texto: str, campo: str):
     """
-    Antes: exigia que `campo` fosse EXATAMENTE igual (char a char) a uma
-    chave de PADROES_ESPECIAIS — se o texto em CAMPOS_PROCURADOS estivesse
-    escrito de forma levemente diferente (espaço a mais, "OC nº" em vez de
-    "OC Master nº", etc.), a busca falhava silenciosamente.
-    Agora usa a mesma comparação "aproximada" (parecido/normalizar) já usada
+    Usa a mesma comparação "aproximada" (parecido/normalizar) já usada
     no resto do script, então funciona mesmo com pequenas variações de texto.
     """
     if parecido("Contratada", campo):
@@ -635,18 +458,7 @@ INDICADORES_ASSINATURA = [
     ("GOV.BR / ICP-Brasil", r"assinado\s+de\s+forma\s+eletr[oô]nica|verifique\s+em\s+https?://verificador\.iti\.gov\.br|assinatura\s+qualificada"),
     ("DocuSign", r"docusign"),
     ("Clicksign", r"clicksign"),
-    # Bloco interno da BBTS (ex.: Notas Técnicas): "Assinado eletronicamente
-    # por: NOME, em DD/MM/AAAA às HH:MM" seguido do cargo/área na(s) linha(s)
-    # de baixo. Precisa vir ANTES do "Genérico" porque a frase é parecida
-    # ("assinado eletronicamente"), mas na ordem "assinado eletronicamente
-    # POR", não "documento assinado eletronicamente".
     ("BBTS (interno)", r"assinado\s+eletronicamente\s+por\s*:"),
-    # Carimbo padrão do Adobe Acrobat para certificado digital (ICP-Brasil
-    # via e-CPF/e-CNPJ, por ex.): "Assinado de forma digital por NOME
-    # (usuario)\nDados: AAAA.MM.DD HH:MM:SS ±HH'MM'". Geralmente vem como
-    # imagem/carimbo na página (não como texto normal do PDF), então só é
-    # capturado quando a página passa pelo OCR — ver _pagina_tem_imagem_grande
-    # em extrair_texto.
     ("Adobe Acrobat (certificado digital)", r"assinado\s+de\s+forma\s+digital\s+por"),
     ("Genérico", r"assinado\s+digitalmente|documento\s+assinado\s+eletronicamente"),
 ]
@@ -655,11 +467,6 @@ PADRAO_SIGNATARIO = re.compile(
     r"([A-ZÀ-Ú][A-ZÀ-Ú0-9\s/]+?)\s-\s(.+?)\s-\s(\d{2}/\d{2}/\d{4})\s[–-]\s(\d{2}:\d{2})"
 )
 
-# Bloco interno da BBTS: "Assinado eletronicamente por: NOME, em DD/MM/AAAA
-# às HH:MM", com o CARGO na linha logo abaixo (ex.: "GERENTE DE DIVISAO").
-# A palavra "às" às vezes some (mesmo dentro do MESMO documento, ex.: os
-# primeiros signatários de uma Nota Técnica têm "às" e os últimos não) —
-# por isso ela é opcional aqui.
 PADRAO_SIGNATARIO_BBTS = re.compile(
     r"Assinado\s+eletronicamente\s+por:\s*"
     r"([A-ZÀ-Ú][A-ZÀ-Ú0-9\s/]+?),\s*em\s+(\d{2}/\d{2}/\d{4})\s+(?:[àa]s\s+)?(\d{2}:\d{2})"
@@ -678,18 +485,10 @@ PADRAO_NUMERO_PROCESSO = re.compile(
     r"sob\s+o\s+n[uú]mero\s+([\w./\-]+)", re.IGNORECASE
 )
 
-# A D4Sign não usa a frase "sob o número X"; ela identifica o envelope pelo
-# "Código do documento <uuid>" impresso no certificado. Usado como
-# alternativa quando PADRAO_NUMERO_PROCESSO não encontra nada.
 PADRAO_CODIGO_D4SIGN = re.compile(
     r"[Cc][oó]digo\s+do\s+documento\s+([0-9a-fA-F\-]{20,40})"
 )
 
-# Carimbo do Adobe Acrobat: "Assinado de forma digital por NOME (usuario)
-# Dados: AAAA.MM.DD HH:MM:SS ±HH'MM'". Como esse texto normalmente só
-# aparece via OCR (o carimbo é uma imagem), o layout pode sair um pouco
-# fora de ordem — por isso o casamento é tolerante a quebras de linha
-# extras entre as partes (re.DOTALL) e não exige a data logo em seguida.
 PADRAO_SIGNATARIO_ADOBE = re.compile(
     r"Assinado\s+de\s+forma\s+digital\s+por\s+"
     r"(.+?)\s*\(([\w.\-]+)\)"
@@ -807,11 +606,6 @@ def verificar_assinatura(texto: str) -> dict:
             "hora": hora,
         })
 
-    # Formato interno da BBTS: "Assinado eletronicamente por: NOME, em
-    # DD/MM/AAAA às HH:MM" com o cargo na linha seguinte (ex.: Notas
-    # Técnicas). Era o único formato de assinatura sem suporte nenhum —
-    # nem entrava no "assinado" (nenhum INDICADOR batia) nem tinha
-    # signatário extraído.
     ja_vistos_bbts = {(s["nome"], s["data"], s["hora"]) for s in resultado["signatarios"]}
     for nome, data, hora, cargo in PADRAO_SIGNATARIO_BBTS.findall(texto):
         nome_normalizado = " ".join(nome.split())
@@ -826,9 +620,6 @@ def verificar_assinatura(texto: str) -> dict:
             "hora": hora,
         })
 
-    # Formato do bloco "Eventos do documento" da D4Sign (era definido mas
-    # nunca chamado — por isso a assinatura era detectada como "assinado",
-    # mas a lista de signatários ficava sempre vazia nesse tipo de PDF).
     ja_vistos = {(s["nome"], s["data"], s["hora"]) for s in resultado["signatarios"]}
     for nome, acao, ano, mes, dia, hora in PADRAO_SIGNATARIO_D4SIGN.findall(texto):
         data = f"{dia}/{mes}/{ano}"
@@ -843,8 +634,6 @@ def verificar_assinatura(texto: str) -> dict:
             "hora": hora,
         })
 
-    # Carimbo do Adobe Acrobat / certificado digital (ICP-Brasil): "Assinado
-    # de forma digital por NOME (usuario) Dados: AAAA.MM.DD HH:MM:SS".
     ja_vistos_adobe = {(s["nome"], s["data"], s["hora"]) for s in resultado["signatarios"]}
     for nome, usuario, ano, mes, dia, hora in PADRAO_SIGNATARIO_ADOBE.findall(texto):
         nome_normalizado = " ".join(nome.split())
@@ -869,14 +658,8 @@ def verificar_assinatura(texto: str) -> dict:
 def processar_pdf(caminho_pdf: str, campos_procurados: list = None) -> dict:
     """
     `campos_procurados` permite passar uma lista de campos específica
-    (ex.: a combinação fluxo+documento decidida em arquivo.py/doc_types.py)
-    em vez da lista fixa CAMPOS_PROCURADOS. Se omitido, usa a lista fixa
-    (mantém o comportamento antigo para quem chama/roda este arquivo
-    isoladamente).
+    (ex.: a combinação fluxo+documento decidida em arquivo.py/doc_types.py).
     """
-    if campos_procurados is None:
-        campos_procurados = CAMPOS_PROCURADOS
-
     texto = extrair_texto(caminho_pdf)
     tabelas = extrair_tabelas(caminho_pdf)
 
@@ -899,14 +682,6 @@ def processar_pdf(caminho_pdf: str, campos_procurados: list = None) -> dict:
 
         resultado[campo] = " ".join(valor.split()) if valor else None
 
-    # Duas fontes de verdade, combinadas: o AcroForm (/Sig) é a mais
-    # confiável — é a assinatura criptográfica de fato, presente mesmo
-    # quando não há nenhum carimbo visual na página (caso do Adobe
-    # Reader). O texto/OCR pega sistemas que carimbam texto de verdade
-    # na página (D4Sign, Aprovve, bloco interno da BBTS etc.), incluindo
-    # casos sem AcroForm nenhum. Um documento é considerado assinado se
-    # qualquer uma das duas fontes indicar isso; os signatários das duas
-    # são somados (evitando duplicar o mesmo nome+data+hora).
     assinatura_acroform = verificar_assinaturas_acroform(caminho_pdf)
     assinatura_texto = verificar_assinatura(texto)
 
@@ -950,23 +725,3 @@ def imprimir_resultado(caminho_pdf: str, resultado: dict) -> None:
             print(f"[ASSINATURA]   - {s['nome']} ({s['cargo']}) em {s['data']} {s['hora']}")
     else:
         print("[ASSINATURA] Nenhum indício de assinatura eletrônica encontrado no documento.")
-
-
-def main():
-    if len(sys.argv) < 2:
-        print("Uso: python pdfs.py caminho/do/arquivo.pdf")
-        sys.exit(1)
-
-    caminho_pdf = sys.argv[1]
-
-    try:
-        resultado = processar_pdf(caminho_pdf)
-    except Exception as erro:
-        print(f"[ERRO] Não foi possível abrir/ler o arquivo '{caminho_pdf}': {erro}")
-        sys.exit(1)
-
-    imprimir_resultado(caminho_pdf, resultado)
-
-
-if __name__ == "__main__":
-    main()

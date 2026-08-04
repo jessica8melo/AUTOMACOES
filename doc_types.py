@@ -4,11 +4,6 @@ Identifica QUAL documento um arquivo representa (Contrato, Nota Técnica,
 FQ415-075, Projeto Básico, Solicitação de Entrega etc.), usando
 marcadores no nome do arquivo e no texto do seu conteúdo.
 
-Este módulo não define a lista de documentos reconhecidos nem seus
-campos — isso está em documentos.py. Aqui só respondemos: "dentre os
-documentos passados em `candidatos` (normalmente
-documentos.listar_documentos()), qual deles é este arquivo?".
-
 Cada categoria de documento tem:
   - "aliases": as chaves usadas em fluxos.FLUXOS que se referem a ela
     (podem variar ligeiramente de fluxo para fluxo, ex.: "Contrato" vs.
@@ -44,14 +39,6 @@ MARCADORES = {
     "contrato": {
         "aliases": ["Contrato", "Contrato / Aditivo"],
         "nome_arquivo": [r"contrat", r"aditivo", r"registro de preco"],
-        # Siglas curtas (2-4 letras) são um indício FRACO pelo nome do
-        # arquivo: "arp", "pb", "nt", "dra" etc. podem aparecer soltas em
-        # QUALQUER nome de arquivo só como referência a outro documento
-        # (ex.: uma planilha de saldo cujo nome cita "NT 2023-0574" sem
-        # ela mesma ser a Nota Técnica). Por isso entram com o mesmo peso
-        # baixo de um padrão de texto (PESO_TEXTO), não de PESO_NOME_ARQUIVO
-        # — assim elas só decidem a classificação quando reforçadas por
-        # outro indício (outro padrão de nome_arquivo_fraco OU de texto).
         "nome_arquivo_fraco": [r"\barp\b"],
         "texto": [
             r"instrumento (particular )?de contrato",
@@ -122,11 +109,7 @@ def _marcadores_para_chave(chave: str) -> dict:
     (a chave de documento tal como usada em fluxos.FLUXOS).
 
     Usa comparação EXATA (case-insensitive) em vez da comparação
-    aproximada `parecido()`: as chaves em fluxos.FLUXOS são strings
-    fixas e conhecidas (não texto livre extraído de documento), e
-    códigos curtos como "FQ412-034"/"FQ412-035"/"FQ415-075" são parecidos
-    demais entre si para a comparação aproximada — ela classificava um
-    errado como o outro.
+    aproximada `parecido()`
     """
     chave_normalizada = normalizar(chave)
     for categoria in MARCADORES.values():
@@ -139,9 +122,8 @@ def _marcadores_para_chave(chave: str) -> dict:
 def identificar_documento(caminho: str, texto: str, candidatos: list) -> str:
     """
     Devolve qual, dentre as chaves em `candidatos` (os documentos que o
-    fluxo atual espera — ver fluxos.documentos_do_fluxo), melhor
-    corresponde ao arquivo em `caminho`, combinando indícios do nome do
-    arquivo com indícios do texto/conteúdo.
+    fluxo atual espera), melhor corresponde ao arquivo em `caminho`, combinando 
+    indícios do nome do arquivo com indícios do texto/conteúdo.
 
     Cada categoria tem 3 tipos de indício:
       - "nome_arquivo": marcador FORTE e específico no nome do arquivo

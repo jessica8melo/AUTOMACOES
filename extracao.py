@@ -5,25 +5,24 @@ está sendo aplicado (ex.: o .docx "FQ415-031_v10 - Checklist OC Padrão –
 Com Contrato.docx"), identifica a QUAL fluxo ele pertence (fluxos.FLUXOS) e,
 para cada documento atrelado a esse checklist (fluxos.documentos_do_fluxo),
 localiza automaticamente o(s) arquivo(s) correspondente(s) dentro da pasta
-de anexos (por padrão "Anexos/") e chama pdfs.py/tabelas.py para extrair
-os campos daquele documento (fluxos.campos_do_documento -> documentos.py)
-— em vez de só listar quais campos seriam esperados.
+de anexos e chama pdfs.py/tabelas.py para extrair os campos daquele documento
+(fluxos.campos_do_documento -> documentos.py)
 
 A identificação do fluxo é feita pelo código (ex.: "FQ415-031") presente
 no NOME do arquivo de checklist; se não achar no nome, tenta no TEXTO do
 .docx (lido direto do zip, sem depender de bibliotecas externas).
 
 A identificação de qual anexo corresponde a qual documento do fluxo reusa
-a mesma lógica de main.py (detectar_tipo/extrair_texto_para_identificacao)
+a mesma lógica de arquivo.py (detectar_tipo/extrair_texto_para_identificacao)
 e doc_types.identificar_documento, restringindo os candidatos aos
 documentos daquele fluxo específico.
 
 Uso:
-    python extracao.py caminho/da/pasta                        # forma recomendada:
-                                                                  # o script acha sozinho o
-                                                                  # arquivo de checklist dentro
-                                                                  # da pasta e usa essa MESMA
-                                                                  # pasta como anexos
+    python extracao.py caminho/da/pasta                         # forma recomendada:
+                                                                # o script acha sozinho o
+                                                                # arquivo de checklist dentro
+                                                                # da pasta e usa essa MESMA
+                                                                # pasta como anexos
     python extracao.py "Checklists/FQ415-031_v10 - Checklist OC Padrão – Com Contrato.docx"
     python extracao.py FQ415-031          # também aceita o código direto
     python extracao.py FQ415-031 caminho/da/pasta/de/anexos   # pasta alternativa (padrão: "Anexos")
@@ -213,9 +212,7 @@ def executar_checklist(id_fluxo: str, pasta_anexos: str = PASTA_ANEXOS_PADRAO,
     Identifica o fluxo `id_fluxo`, localiza automaticamente (dentro de
     `pasta_anexos`) os arquivos que correspondem a cada documento do
     checklist e chama pdfs.py/tabelas.py para extrair os campos de cada
-    um — em vez de só listar os campos esperados. `excluir` permite pular,
-    na varredura, arquivos que não são anexos (ex.: o próprio arquivo de
-    checklist, quando `pasta_anexos` é a pasta onde ele está).
+    um.
     """
     dados = fluxos.FLUXOS[id_fluxo]
     documentos_do_fluxo = fluxos.documentos_do_fluxo(id_fluxo)

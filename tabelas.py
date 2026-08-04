@@ -3,9 +3,6 @@
 Busca campos específicos dentro de uma planilha xlsx (ex.: Formulário de
 Qualidade - FQ), localizando automaticamente a linha de cabeçalho da tabela
 e lendo os valores da(s) linha(s) de dados logo abaixo.
-
-Uso:
-    python buscar_campos_xlsx.py caminho/do/arquivo.xlsx
 """
 
 import sys
@@ -194,14 +191,8 @@ def processar_xlsx(caminho_xlsx: str, campos_procurados: list = None) -> dict:
     Lança exceção se o arquivo não puder ser aberto/lido.
 
     `campos_procurados` permite passar uma lista de campos específica
-    (ex.: a combinação fluxo+documento decidida em arquivo.py/doc_types.py)
-    em vez da lista fixa CAMPOS_PROCURADOS. Se omitido, usa a lista fixa
-    (mantém o comportamento antigo para quem chama/roda este arquivo
-    isoladamente).
+    (ex.: a combinação fluxo+documento decidida em arquivo.py/doc_types.py).
     """
-    if campos_procurados is None:
-        campos_procurados = CAMPOS_PROCURADOS
-
     wb = openpyxl.load_workbook(caminho_xlsx, data_only=True)
 
     for ws in wb.worksheets:
@@ -264,26 +255,3 @@ def imprimir_resultado(caminho_xlsx: str, resultado: dict) -> None:
         else:
             print(f"[SUCESSO] Campo '{campo}' encontrado ({len(valores)} linhas). "
                   f"Valores: {valores}")
-
-
-# ---------------------------------------------------------------------------
-# Programa principal (uso via linha de comando, standalone)
-# ---------------------------------------------------------------------------
-def main():
-    if len(sys.argv) < 2:
-        print("Uso: python tabelas.py caminho/do/arquivo.xlsx")
-        sys.exit(1)
-
-    caminho_xlsx = sys.argv[1]
-
-    try:
-        resultado = processar_xlsx(caminho_xlsx)
-    except Exception as erro:
-        print(f"[ERRO] Não foi possível abrir o arquivo '{caminho_xlsx}': {erro}")
-        sys.exit(1)
-
-    imprimir_resultado(caminho_xlsx, resultado)
-
-
-if __name__ == "__main__":
-    main()

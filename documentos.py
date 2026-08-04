@@ -7,10 +7,6 @@ cada tipo de documento (Contrato, FQ415-075, Nota Técnica, Projeto
 Básico, Solicitação de Entrega), lista os campos que devem ser
 localizados dentro do arquivo.
 
-Por enquanto o projeto foca só nisso — identificar o documento e extrair
-seus campos — sem amarrar isso a um fluxo/checklist específico (isso
-fica para depois, em fluxos.py).
-
 Para adicionar, remover ou renomear campos de um documento, edite
 livremente o dicionário abaixo.
 """

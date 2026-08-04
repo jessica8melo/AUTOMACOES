@@ -4,9 +4,8 @@ Definição dos fluxos (checklists) de conferência de documentos.
 
 Cada fluxo representa um tipo de processo (ex.: FQ415-031 - OC Padrão com
 Contrato). Dentro de cada fluxo, listamos apenas os NOMES dos documentos
-que fazem parte do checklist — os campos a conferir de cada documento não
-são mais duplicados aqui: eles vêm de documentos.py, que é o ponto único
-de configuração da etapa de extração.
+que fazem parte do checklist — os campos a conferir de cada documento
+vêm de documentos.py, que é o ponto único de configuração da etapa de extração.
 
 Se um documento do fluxo não existir em documentos.py (ex.: "FQ412-034",
 "Ata do Condomínio"), significa que ele não tem campos a extrair — nesse
@@ -15,8 +14,7 @@ de assinaturas.
 
 Convenção especial:
     Itens de checklist que são conferências de assinatura (e não campos a
-    extrair) usam o prefixo "ASSINATURAS:" (ex.: "ASSINATURAS: Conferir
-    assinaturas de todos os documentos"). Esses itens são tratados à parte
+    extrair) usam o prefixo "ASSINATURAS:". Esses itens são tratados à parte
     (usam o verificador de assinatura de pdfs.py em vez de busca de campo).
 """
 
@@ -114,17 +112,6 @@ def campos_do_documento(id_fluxo: str, tipo_documento: str) -> list:
 
     Os campos vêm de documentos.py. Se o documento não fizer parte do
     fluxo, devolve [].
-
-    O item de conferência de assinatura (ITEM_ASSINATURA_PADRAO) é sempre
-    incluído, além dos campos normais — não só quando o documento não tem
-    nenhum campo cadastrado. Assim, TODO documento do checklist (Contrato,
-    Nota Técnica, FQ415-075, Projeto Básico, Solicitação de Entrega etc.)
-    passa pela checagem de assinatura, e não só os que não têm campo
-    nenhum (FQ412-034, FQ412-035, Ata/Boleto do Condomínio). Quem decide
-    se a assinatura É de fato conferível é extracao.py: PDFs são
-    checados de verdade (pdfs.verificar_assinatura); planilhas apenas
-    avisam que a conferência não se aplica e deve ser feita manualmente
-    (ver processar_documento_anexo em extracao.py).
     """
     if tipo_documento not in documentos_do_fluxo(id_fluxo):
         return []

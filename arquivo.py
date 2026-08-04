@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
-Ponto de entrada único.
-
-Por enquanto o projeto foca só na EXTRAÇÃO DE DADOS dos documentos (a
-parte dos fluxos/checklists de fluxos.py fica pausada para depois).
+Ponto de entrada para leitura de UM único arquivo.
 
 Etapas do script:
 
