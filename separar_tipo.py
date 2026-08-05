@@ -129,6 +129,23 @@ def aplicar_borda_grossa_inferior(ws, row, num_cols):
         )
 
 
+def limpar_aba(ws):
+    """Remove valores, formatação e merges existentes, mantendo a aba (mesmo
+    nome, mesma posição), para reconstruirmos o conteúdo do zero nela."""
+    for mc in list(ws.merged_cells.ranges):
+        ws.unmerge_cells(str(mc))
+    max_row = ws.max_row
+    max_col = ws.max_column
+    for row in ws.iter_rows(min_row=1, max_row=max_row, max_col=max_col):
+        for cell in row:
+            cell.value = None
+            cell.font = Font(name=FONT_NAME, size=10)
+            cell.fill = PatternFill(fill_type=None)
+            cell.border = Border()
+            cell.alignment = Alignment()
+    ws.auto_filter.ref = None
+
+
 def main(caminho):
     wb = openpyxl.load_workbook(caminho)
     ws_origem = wb["Conciliação"] if "Conciliação" in wb.sheetnames else wb.active
@@ -153,10 +170,9 @@ def main(caminho):
 
     headers_ob, linhas_ob = localizar_bloco_ob(ws_origem)
 
-    nome_aba = "Recebimentos e Pagamentos"
-    if nome_aba in wb.sheetnames:
-        del wb[nome_aba]
-    ws = wb.create_sheet(nome_aba)
+    # Reconstrói o conteúdo dentro da MESMA aba (nada de aba nova)
+    ws = ws_origem
+    limpar_aba(ws)
 
     linha_atual = 1
 
@@ -251,7 +267,7 @@ def main(caminho):
         print(f"Bloco OB/VALOR: {len(linhas_ob)} linhas ao lado do bloco de Pagamentos")
     else:
         print("Bloco OB/VALOR: não encontrado na planilha de origem (colunas 'OB'/'VALOR' não localizadas)")
-    print(f"Tudo reunido na aba '{nome_aba}'.")
+    print(f"Tudo reorganizado dentro da própria aba '{ws.title}'.")
 
 
 if __name__ == "__main__":
