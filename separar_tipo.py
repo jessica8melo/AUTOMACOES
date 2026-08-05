@@ -21,6 +21,7 @@ import sys
 import datetime
 import openpyxl
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.datetime import from_excel
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 FONT_NAME = "Arial"
@@ -159,7 +160,7 @@ def escrever_linhas(ws, start_row, linhas, col_valor_idx=None, col_data_idx=None
                 cell.number_format = "#,##0.00"
                 cell.alignment = RIGHT
             elif col_data_idx is not None and c_idx == col_data_idx and isinstance(valor, (datetime.datetime, datetime.date)):
-                cell.number_format = "DD/MM/YYYY"
+                cell.number_format = "d-mmm-yy"
                 cell.alignment = CENTER
             elif c_idx == 1:
                 cell.alignment = CENTER
@@ -194,7 +195,26 @@ def limpar_aba(ws):
     ws.auto_filter.ref = None
 
 
-def processar_aba(ws):
+def corrigir_data_serial(valor, epoch):
+    """Algumas linhas trazem a Data Transação como número serial do Excel
+    (célula original sem formatação de data -> openpyxl lê como int/float
+    em vez de datetime). Converte esses casos para datetime, usando o
+    epoch da própria planilha (evita erro de 1 dia entre epochs 1900/1904).
+    Valores que já são datetime, ou que não parecem data, são devolvidos
+    sem alteração."""
+    if isinstance(valor, (datetime.datetime, datetime.date)):
+        return valor
+    if isinstance(valor, bool):
+        return valor
+    if isinstance(valor, (int, float)):
+        try:
+            return from_excel(valor, epoch)
+        except Exception:
+            return valor
+    return valor
+
+
+def processar_aba(ws, epoch):
     """Processa uma aba. Retorna um dict com o relatório, ou None se a aba
     não tiver a estrutura esperada (e nesse caso não é alterada)."""
     cabecalho_b = ws.cell(row=1, column=2).value
@@ -211,6 +231,7 @@ def processar_aba(ws):
         linha_valores = [ws.cell(row=r, column=c).value for c in range(1, NUM_COLS + 1)]
         if linha_valores[0] is None:
             continue
+        linha_valores[COL_DATA - 1] = corrigir_data_serial(linha_valores[COL_DATA - 1], epoch)
         categoria = classificar(linha_valores[1])
         if categoria == "Recebimento":
             recebimentos.append(linha_valores)
@@ -328,7 +349,7 @@ def main(caminho):
 
     for nome in wb.sheetnames:
         ws = wb[nome]
-        resultado = processar_aba(ws)
+        resultado = processar_aba(ws, wb.epoch)
         if resultado is None:
             puladas.append(nome)
         else:
