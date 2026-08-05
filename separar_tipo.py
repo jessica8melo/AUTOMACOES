@@ -1,28 +1,35 @@
 """
-Script para separar a planilha de conciliação em Recebimentos e Pagamentos,
-mantendo tudo em UMA ÚNICA aba (Recebimentos primeiro, depois Pagamentos),
-com uma borda mais grossa marcando a divisão entre os dois blocos.
+Script para separar, em TODAS as abas de uma planilha, os lançamentos em
+Recebimentos e Pagamentos, mantendo cada aba original (sem criar abas novas),
+empilhando Recebimentos no topo e Pagamentos embaixo, com uma borda mais
+grossa marcando a divisão entre os dois blocos.
 
 Regra usada: qualquer valor da coluna "Tipo" que COMEÇA com "Recebimento"
 vai para o bloco de Recebimentos; qualquer valor que COMEÇA com "Pagamento"
-vai para o bloco de Pagamentos. Isso cobre variações como "Recebimento" e
-"Recebimento Div." / "Pagamento" e "Pagamento Div.".
+vai para o bloco de Pagamentos. Cobre variações como "Recebimento Div." /
+"Pagamento Div.".
+
+Cada aba é processada de forma independente, e só é alterada se tiver a
+estrutura esperada (cabeçalho com "Tipo" na coluna B). Abas sem essa
+estrutura são ignoradas e avisadas no relatório final.
 
 Uso:
-    python separar_tipo.py caminho_da_planilha.xlsx
+    python separar_tipo_v2.py caminho_da_planilha.xlsx
 """
 
 import sys
+import datetime
 import openpyxl
+from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 FONT_NAME = "Arial"
 HEADER_FONT = Font(name=FONT_NAME, bold=True, color="FFFFFF", size=10)
 HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
-# Cabeçalho de cada bloco (linha "Recebimentos" / "Pagamentos")
 BLOCO_FONT = Font(name=FONT_NAME, bold=True, color="FFFFFF", size=11)
 BLOCO_FILL_RECEB = PatternFill("solid", fgColor="2E7D32")
 BLOCO_FILL_PAG = PatternFill("solid", fgColor="B71C1C")
+BLOCO_FILL_OUTROS = PatternFill("solid", fgColor="616161")
 NORMAL_FONT = Font(name=FONT_NAME, size=10)
 
 THIN = Side(style="thin", color="B7B7B7")
@@ -32,10 +39,12 @@ CENTER = Alignment(horizontal="center", vertical="center")
 LEFT = Alignment(horizontal="left", vertical="center")
 RIGHT = Alignment(horizontal="right", vertical="center")
 
-NUM_COLS = 7  # A:G
+NUM_COLS = 7  # A:G -> Linha, Tipo, Código, Data Transação, Quantia, Status, Justificativas
+COL_QUANTIA = 5
+COL_DATA = 4
 
 
-def classificar(tipo: str) -> str:
+def classificar(tipo) -> str:
     """Retorna 'Recebimento', 'Pagamento' ou 'Outro' com base no texto do Tipo."""
     if not tipo:
         return "Outro"
@@ -47,69 +56,112 @@ def classificar(tipo: str) -> str:
     return "Outro"
 
 
-def localizar_bloco_ob(ws_origem):
-    """Procura, na linha de cabeçalho, colunas chamadas 'OB' e 'VALOR' (nessa
-    ordem, lado a lado) e devolve (headers, linhas) desse bloco, ou (None, None)
-    se não encontrar."""
-    header_row = ws_origem[1]
+def ultima_linha_com_dados(ws, max_col):
+    """Última linha (>=1) que tem algum valor não vazio em alguma das
+    primeiras `max_col` colunas. Necessário porque a aba pode ter
+    formatação/dimensão até a linha 1000 sem dado real."""
+    last = 1
+    for r, row in enumerate(
+        ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=max_col, values_only=True),
+        start=2,
+    ):
+        if any(v is not None and v != "" for v in row):
+            last = r
+    return last
+
+
+def localizar_col_ob(ws, ultima_linha, max_col):
+    """Procura no cabeçalho (linha 1) uma célula 'OB' seguida, na coluna
+    seguinte, por uma célula 'VALOR'. Retorna (col_ob, col_valor) ou
+    (None, None). Em seguida, estende o início do bloco para a esquerda
+    enquanto encontrar colunas com dados contíguas antes de 'OB' (ex.: uma
+    coluna sem cabeçalho tipo 'OK' colada ao lado do OB), sem nunca invadir
+    a tabela principal (colunas 1..NUM_COLS)."""
     col_ob = None
-    for cell in header_row:
-        if cell.value and str(cell.value).strip().upper() == "OB":
-            col_ob = cell.column
+    for c in range(1, max_col + 1):
+        v = ws.cell(row=1, column=c).value
+        if v and str(v).strip().upper() == "OB":
+            col_ob = c
             break
     if col_ob is None:
-        return None, None
+        return None, None, None
 
     col_valor = col_ob + 1
-    valor_titulo = ws_origem.cell(row=1, column=col_valor).value
-    if not valor_titulo or str(valor_titulo).strip().upper() != "VALOR":
-        return None, None
+    v_valor = ws.cell(row=1, column=col_valor).value
+    if not v_valor or str(v_valor).strip().upper() != "VALOR":
+        return None, None, None
 
-    headers = [ws_origem.cell(row=1, column=col_ob).value,
-               ws_origem.cell(row=1, column=col_valor).value]
+    extra_inicio = col_ob
+    col = col_ob - 1
+    while col > NUM_COLS:
+        tem_dado = any(
+            ws.cell(row=r, column=col).value not in (None, "")
+            for r in range(2, ultima_linha + 1)
+        )
+        if tem_dado:
+            extra_inicio = col
+            col -= 1
+        else:
+            break
 
-    linhas = []
-    for r in range(2, ws_origem.max_row + 1):
-        v_ob = ws_origem.cell(row=r, column=col_ob).value
-        v_valor = ws_origem.cell(row=r, column=col_valor).value
-        if v_ob is None and v_valor is None:
-            continue
-        linhas.append((v_ob, v_valor))
-
-    return headers, linhas
+    return col_ob, col_valor, extra_inicio
 
 
-def escrever_cabecalho_colunas(ws, row, headers):
-    for col, titulo in enumerate(headers, start=1):
-        c = ws.cell(row=row, column=col, value=titulo)
+def coletar_conteudo_fora_do_padrao(ws, ultima_linha, max_col, extra_inicio, col_valor):
+    """Lista células com conteúdo fora das colunas conhecidas (tabela
+    principal 1..NUM_COLS e bloco extra extra_inicio..col_valor), para
+    avisar o usuário em vez de apagar silenciosamente."""
+    avisos = []
+    faixas_conhecidas = set(range(1, NUM_COLS + 1))
+    if extra_inicio is not None:
+        faixas_conhecidas |= set(range(extra_inicio, col_valor + 1))
+    for r in range(2, ultima_linha + 1):
+        for c in range(1, max_col + 1):
+            if c in faixas_conhecidas:
+                continue
+            v = ws.cell(row=r, column=c).value
+            if v not in (None, ""):
+                avisos.append((r, get_column_letter(c), v))
+    return avisos
+
+
+def escrever_cabecalho_colunas(ws, row, headers, col_inicial=1):
+    for off, titulo in enumerate(headers):
+        c = ws.cell(row=row, column=col_inicial + off, value=titulo)
         c.font = HEADER_FONT
         c.fill = HEADER_FILL
         c.alignment = CENTER
         c.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
 
-def escrever_titulo_bloco(ws, row, texto, fill, num_cols):
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=num_cols)
-    c = ws.cell(row=row, column=1, value=texto)
+def escrever_titulo_bloco(ws, row, texto, fill, num_cols, col_inicial=1):
+    ws.merge_cells(start_row=row, start_column=col_inicial, end_row=row,
+                    end_column=col_inicial + num_cols - 1)
+    c = ws.cell(row=row, column=col_inicial, value=texto)
     c.font = BLOCO_FONT
     c.fill = fill
     c.alignment = CENTER
-    for col in range(1, num_cols + 1):
+    for col in range(col_inicial, col_inicial + num_cols):
         ws.cell(row=row, column=col).fill = fill
 
 
-def escrever_linhas(ws, start_row, linhas, col_valor_idx=None):
-    """Escreve as linhas de dados a partir de start_row. Retorna a última linha usada."""
+def escrever_linhas(ws, start_row, linhas, col_valor_idx=None, col_data_idx=None, col_inicial=1):
+    """Escreve as linhas de dados a partir de start_row. Retorna a última linha usada
+    (start_row - 1 se não houver linhas)."""
     r = start_row
     for linha in linhas:
-        for c_idx, valor in enumerate(linha, start=1):
-            cell = ws.cell(row=r, column=c_idx, value=valor)
+        for c_off, valor in enumerate(linha, start=0):
+            c_idx = c_off + 1  # posição dentro do bloco (1-based)
+            cell = ws.cell(row=r, column=col_inicial + c_off, value=valor)
             cell.font = NORMAL_FONT
             cell.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
             if col_valor_idx is not None and c_idx == col_valor_idx:
                 cell.number_format = "#,##0.00"
                 cell.alignment = RIGHT
-            elif c_idx in (1, 4):  # Linha / Data Transação centralizadas
+            elif col_data_idx is not None and c_idx == col_data_idx and isinstance(valor, (datetime.datetime, datetime.date)):
+                cell.number_format = "DD/MM/YYYY"
+                cell.alignment = CENTER
+            elif c_idx == 1:
                 cell.alignment = CENTER
             else:
                 cell.alignment = LEFT
@@ -117,21 +169,17 @@ def escrever_linhas(ws, start_row, linhas, col_valor_idx=None):
     return r - 1
 
 
-def aplicar_borda_grossa_inferior(ws, row, num_cols):
-    """Engrossa a borda inferior de toda a linha indicada, marcando a divisão
-    entre o bloco de Recebimentos e o bloco de Pagamentos."""
-    for col in range(1, num_cols + 1):
+def aplicar_borda_grossa_inferior(ws, row, col_inicial, num_cols):
+    for col in range(col_inicial, col_inicial + num_cols):
         cell = ws.cell(row=row, column=col)
         existing = cell.border
-        cell.border = Border(
-            left=existing.left, right=existing.right,
-            top=existing.top, bottom=THICK,
-        )
+        cell.border = Border(left=existing.left, right=existing.right,
+                              top=existing.top, bottom=THICK)
 
 
 def limpar_aba(ws):
     """Remove valores, formatação e merges existentes, mantendo a aba (mesmo
-    nome, mesma posição), para reconstruirmos o conteúdo do zero nela."""
+    nome/posição), para reconstruir o conteúdo do zero dentro dela."""
     for mc in list(ws.merged_cells.ranges):
         ws.unmerge_cells(str(mc))
     max_row = ws.max_row
@@ -146,54 +194,64 @@ def limpar_aba(ws):
     ws.auto_filter.ref = None
 
 
-def main(caminho):
-    wb = openpyxl.load_workbook(caminho)
-    ws_origem = wb["Conciliação"] if "Conciliação" in wb.sheetnames else wb.active
+def processar_aba(ws):
+    """Processa uma aba. Retorna um dict com o relatório, ou None se a aba
+    não tiver a estrutura esperada (e nesse caso não é alterada)."""
+    cabecalho_b = ws.cell(row=1, column=2).value
+    if not cabecalho_b or "tipo" not in str(cabecalho_b).strip().lower():
+        return None
 
-    headers = [c.value for c in ws_origem[1][:NUM_COLS]]  # A:G
+    max_col = max(ws.max_column, NUM_COLS + 2)
+    ultima_linha = ultima_linha_com_dados(ws, max_col)
 
-    recebimentos = []
-    pagamentos = []
-    outros = []
+    headers = [ws.cell(row=1, column=c).value for c in range(1, NUM_COLS + 1)]
 
-    for row in ws_origem.iter_rows(min_row=2, max_col=NUM_COLS, values_only=True):
-        if row[0] is None:
+    recebimentos, pagamentos, outros = [], [], []
+    for r in range(2, ultima_linha + 1):
+        linha_valores = [ws.cell(row=r, column=c).value for c in range(1, NUM_COLS + 1)]
+        if linha_valores[0] is None:
             continue
-        tipo = row[1]
-        categoria = classificar(tipo)
+        categoria = classificar(linha_valores[1])
         if categoria == "Recebimento":
-            recebimentos.append(row)
+            recebimentos.append(linha_valores)
         elif categoria == "Pagamento":
-            pagamentos.append(row)
+            pagamentos.append(linha_valores)
         else:
-            outros.append(row)
+            outros.append(linha_valores)
 
-    headers_ob, linhas_ob = localizar_bloco_ob(ws_origem)
+    col_ob, col_valor, extra_inicio = localizar_col_ob(ws, ultima_linha, max_col)
 
-    # Reconstrói o conteúdo dentro da MESMA aba (nada de aba nova)
-    ws = ws_origem
+    headers_extra = None
+    linhas_extra = []
+    if col_ob is not None:
+        headers_extra = [ws.cell(row=1, column=c).value for c in range(extra_inicio, col_valor + 1)]
+        for r in range(2, ultima_linha + 1):
+            valores = [ws.cell(row=r, column=c).value for c in range(extra_inicio, col_valor + 1)]
+            if any(v is not None and v != "" for v in valores):
+                linhas_extra.append(valores)
+
+    avisos = coletar_conteudo_fora_do_padrao(ws, ultima_linha, max_col, extra_inicio, col_valor)
+
+    # --- Reconstrói a aba ---
     limpar_aba(ws)
-
     linha_atual = 1
 
-    # --- Bloco Recebimentos ---
     escrever_titulo_bloco(ws, linha_atual, f"RECEBIMENTOS ({len(recebimentos)})",
                            BLOCO_FILL_RECEB, NUM_COLS)
     linha_atual += 1
     escrever_cabecalho_colunas(ws, linha_atual, headers)
     linha_header_receb = linha_atual
     linha_atual += 1
-    ultima_linha_receb = escrever_linhas(ws, linha_atual, recebimentos, col_valor_idx=5)
+    ultima_linha_receb = escrever_linhas(ws, linha_atual, recebimentos,
+                                          col_valor_idx=COL_QUANTIA, col_data_idx=COL_DATA)
     if not recebimentos:
         ultima_linha_receb = linha_atual - 1
 
-    # Borda grossa separando os dois blocos
     linha_divisoria = max(ultima_linha_receb, linha_header_receb)
-    aplicar_borda_grossa_inferior(ws, linha_divisoria, NUM_COLS)
+    aplicar_borda_grossa_inferior(ws, linha_divisoria, 1, NUM_COLS)
 
-    linha_atual = linha_divisoria + 2  # pula uma linha em branco
+    linha_atual = linha_divisoria + 2
 
-    # --- Bloco Pagamentos ---
     linha_titulo_pag = linha_atual
     escrever_titulo_bloco(ws, linha_atual, f"PAGAMENTOS ({len(pagamentos)})",
                            BLOCO_FILL_PAG, NUM_COLS)
@@ -201,73 +259,103 @@ def main(caminho):
     escrever_cabecalho_colunas(ws, linha_atual, headers)
     linha_atual += 1
     inicio_dados_pag = linha_atual
-    ultima_linha_pag = escrever_linhas(ws, linha_atual, pagamentos, col_valor_idx=5)
+    ultima_linha_pag = escrever_linhas(ws, linha_atual, pagamentos,
+                                        col_valor_idx=COL_QUANTIA, col_data_idx=COL_DATA)
+    if not pagamentos:
+        ultima_linha_pag = linha_atual - 1
 
-    # Bloco extra OB/VALOR ao lado do bloco de Pagamentos (colunas I:J)
-    if headers_ob is not None:
-        col_inicial_ob = NUM_COLS + 2  # coluna I
-        escrever_cabecalho_colunas_extra = None
-        # título do mini-bloco, alinhado com o título de Pagamentos
-        ws.merge_cells(start_row=linha_titulo_pag, start_column=col_inicial_ob,
-                        end_row=linha_titulo_pag, end_column=col_inicial_ob + 1)
-        c = ws.cell(row=linha_titulo_pag, column=col_inicial_ob, value="OB / VALOR")
+    if headers_extra is not None:
+        col_inicial_extra = NUM_COLS + 2  # deixa uma coluna de espaço
+        num_cols_extra = len(headers_extra)
+
+        ws.merge_cells(start_row=linha_titulo_pag, start_column=col_inicial_extra,
+                        end_row=linha_titulo_pag, end_column=col_inicial_extra + num_cols_extra - 1)
+        c = ws.cell(row=linha_titulo_pag, column=col_inicial_extra, value="OB / VALOR")
         c.font = BLOCO_FONT
         c.fill = BLOCO_FILL_PAG
         c.alignment = CENTER
-        ws.cell(row=linha_titulo_pag, column=col_inicial_ob + 1).fill = BLOCO_FILL_PAG
+        for off in range(num_cols_extra):
+            ws.cell(row=linha_titulo_pag, column=col_inicial_extra + off).fill = BLOCO_FILL_PAG
 
-        for col_off, titulo in enumerate(headers_ob):
-            cc = ws.cell(row=linha_titulo_pag + 1, column=col_inicial_ob + col_off, value=titulo)
-            cc.font = HEADER_FONT
-            cc.fill = HEADER_FILL
-            cc.alignment = CENTER
-            cc.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+        escrever_cabecalho_colunas(ws, linha_titulo_pag + 1, headers_extra, col_inicial=col_inicial_extra)
 
-        for i, (v_ob, v_valor) in enumerate(linhas_ob):
-            r = inicio_dados_pag + i
-            c_ob = ws.cell(row=r, column=col_inicial_ob, value=v_ob)
-            c_ob.font = NORMAL_FONT
-            c_ob.alignment = CENTER
-            c_ob.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+        r = inicio_dados_pag
+        for valores in linhas_extra:
+            for off, v in enumerate(valores):
+                cell = ws.cell(row=r, column=col_inicial_extra + off, value=v)
+                cell.font = NORMAL_FONT
+                cell.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+                if off == num_cols_extra - 1:  # última coluna do bloco = VALOR
+                    cell.number_format = "#,##0.00"
+                    cell.alignment = RIGHT
+                else:
+                    cell.alignment = CENTER
+            r += 1
 
-            c_val = ws.cell(row=r, column=col_inicial_ob + 1, value=v_valor)
-            c_val.font = NORMAL_FONT
-            c_val.number_format = "#,##0.00"
-            c_val.alignment = RIGHT
-            c_val.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
+        for off in range(num_cols_extra):
+            letra = ws.cell(row=1, column=col_inicial_extra + off).column_letter
+            ws.column_dimensions[letra].width = 14
 
-        letra_inicial = ws.cell(row=1, column=col_inicial_ob).column_letter
-        ws.column_dimensions[letra_inicial].width = 14
-        ws.column_dimensions[ws.cell(row=1, column=col_inicial_ob + 1).column_letter].width = 14
-
-    linha_final_pag = ultima_linha_pag
-
-    # --- Bloco Outros (se houver) ---
     if outros:
-        linha_atual = linha_final_pag + 2
+        linha_atual = ultima_linha_pag + 2
         escrever_titulo_bloco(ws, linha_atual, f"OUTROS ({len(outros)})",
-                               PatternFill("solid", fgColor="616161"), NUM_COLS)
+                               BLOCO_FILL_OUTROS, NUM_COLS)
         linha_atual += 1
         escrever_cabecalho_colunas(ws, linha_atual, headers)
         linha_atual += 1
-        escrever_linhas(ws, linha_atual, outros, col_valor_idx=5)
+        escrever_linhas(ws, linha_atual, outros, col_valor_idx=COL_QUANTIA, col_data_idx=COL_DATA)
 
     larguras = {"A": 7, "B": 18, "C": 11, "D": 15, "E": 13, "F": 18, "G": 32}
     for col, w in larguras.items():
         ws.column_dimensions[col].width = w
     ws.freeze_panes = "A2"
 
+    return {
+        "aba": ws.title,
+        "recebimentos": len(recebimentos),
+        "pagamentos": len(pagamentos),
+        "outros": len(outros),
+        "extra": len(linhas_extra) if headers_extra is not None else None,
+        "avisos": avisos,
+    }
+
+
+def main(caminho):
+    wb = openpyxl.load_workbook(caminho)
+
+    relatorios = []
+    puladas = []
+
+    for nome in wb.sheetnames:
+        ws = wb[nome]
+        resultado = processar_aba(ws)
+        if resultado is None:
+            puladas.append(nome)
+        else:
+            relatorios.append(resultado)
+
     wb.save(caminho)
 
-    print(f"Recebimentos: {len(recebimentos)} linhas")
-    print(f"Pagamentos:   {len(pagamentos)} linhas")
-    if outros:
-        print(f"Outros:       {len(outros)} linhas (não classificados)")
-    if headers_ob is not None:
-        print(f"Bloco OB/VALOR: {len(linhas_ob)} linhas ao lado do bloco de Pagamentos")
-    else:
-        print("Bloco OB/VALOR: não encontrado na planilha de origem (colunas 'OB'/'VALOR' não localizadas)")
-    print(f"Tudo reorganizado dentro da própria aba '{ws.title}'.")
+    print(f"Abas processadas: {len(relatorios)}")
+    print(f"Abas puladas (sem coluna 'Tipo' no cabeçalho): {len(puladas)}")
+    if puladas:
+        print("  ->", ", ".join(puladas))
+    print()
+    total_avisos = 0
+    for rel in relatorios:
+        extra_txt = f", extra OB/VALOR: {rel['extra']}" if rel["extra"] is not None else ""
+        print(f"[{rel['aba']}] Recebimentos: {rel['recebimentos']} | "
+              f"Pagamentos: {rel['pagamentos']} | Outros: {rel['outros']}{extra_txt}")
+        if rel["avisos"]:
+            total_avisos += len(rel["avisos"])
+            print(f"    ATENÇÃO: {len(rel['avisos'])} célula(s) fora do padrão conhecido "
+                  f"(não foram movidas, pois não sabemos onde encaixá-las):")
+            for r, col_letra, v in rel["avisos"][:10]:
+                print(f"      - {col_letra}{r}: {v!r}")
+            if len(rel["avisos"]) > 10:
+                print(f"      ... e mais {len(rel['avisos']) - 10}")
+    if total_avisos == 0:
+        print("\nNenhum conteúdo fora do padrão encontrado.")
 
 
 if __name__ == "__main__":
