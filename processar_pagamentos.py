@@ -12,20 +12,37 @@ Passo 1: em cada aba, remove da tabela de OBs (colunas "OB"/"VALOR") todas
 as linhas em que VALOR = 0.
 
 Passo 2: em cada aba, concilia pagamento(s) com OB dentro dessa mesma aba.
-Para cada OB, a busca por pagamento(s) segue uma ordem de prioridade:
+A busca por match segue uma ordem de prioridade:
 
-    1) Match exato de UM único pagamento cujo valor bate com o da OB.
-       Se existir, é usado na hora, sem procurar combinações.
-    2) Combinações de 2 ou mais pagamentos cuja soma bate com o valor da
-       OB, dando preferência para pagamentos que estejam fisicamente
-       próximos entre si na planilha (idealmente na linha logo abaixo ou
-       logo acima um do outro).
-    3) Se nada acima servir, vale qualquer combinação exata encontrada pela
+    1) Match exato de UM único pagamento cujo valor bate com o de UMA OB.
+       Feito primeiro, pra TODAS as OBs, sem nenhuma ambiguidade (não
+       depende de olhar combinações).
+
+    2) Entre as OBs que sobraram sem match no passo 1, tenta somar 2 ou
+       mais delas entre si (ex.: duas remessas que na prática foram pagas
+       juntas em um único lote) e ver se essa soma bate com um pagamento ou
+       combinação de pagamentos ainda disponível - ver
+       `_buscar_combo_obs_pagamentos`. Importante isso vir ANTES do passo
+       3: se uma OB isolada "coubesse" dentro de um pool de pagamentos de
+       valor repetido (ex.: vários pagamentos de R$300,00 iguais), o passo
+       3 casaria essa OB sozinha com um subconjunto arbitrário desse pool,
+       "gastando" pagamentos que na verdade deveriam ficar reservados para
+       serem somados junto com OUTRA OB (ex.: duas OBs que juntas fecham
+       o valor de TODO o pool de repetidos). Rodar a combinação de OBs
+       primeiro evita esse tipo de match "ganancioso" e incompleto.
+
+    3) Para as OBs que ainda sobrarem, combinações de 2 ou mais pagamentos
+       cuja soma bate com o valor de UMA OB isolada, dando preferência para
+       pagamentos que estejam fisicamente próximos entre si na planilha
+       (idealmente na linha logo abaixo ou logo acima um do outro).
+
+    4) Se nada acima servir, vale qualquer combinação exata encontrada pela
        busca exaustiva (com poda), mesmo que os pagamentos estejam
        espalhados/longe uns dos outros.
 
-Quando acha, pinta a(s) linha(s) do(s) pagamento(s) e a linha da OB com a
-mesma cor, deixando visualmente claro quem está atrelado a quem.
+Quando acha, pinta a(s) linha(s) do(s) pagamento(s) e a(s) linha(s) da(s)
+OB(s) com a mesma cor, deixando visualmente claro quem está atrelado a
+quem (inclusive quando o grupo tem mais de uma OB).
 
 Abas sem bloco de Pagamentos e/ou sem tabela OB/VALOR são ignoradas (nada é
 alterado nelas).
@@ -55,6 +72,8 @@ Uso:
 """
 
 import argparse
+import itertools
+import math
 import sys
 
 import openpyxl
@@ -382,7 +401,115 @@ def _buscar_tamanho_fixo(itens, valores, alvo, tamanho):
     return melhor_combo
 
 
-def conciliar_pagamentos_obs_aba(ws, max_combinacao=15):
+# trava de segurança: para um dado tamanho de combinação, se o número de
+# combinações possíveis (n escolhe k) passar disso, esse tamanho é pulado em
+# vez de arriscar travar o script numa aba com muitos itens sem match
+LIMITE_COMBINACOES = 200_000
+
+
+def _enumerar_somas(itens, valor_fn, max_tamanho, teto_centavos=None, limite=LIMITE_COMBINACOES):
+    """Enumera, com poda, combinações de `itens` de tamanho 1 até
+    `max_tamanho`, devolvendo um mapa {soma_centavos: combinação}. `valor_fn`
+    extrai o valor monetário de um item. Os itens são ordenados por valor
+    crescente e percorridos em ordem crescente de TAMANHO de combinação, então
+    pra cada soma a combinação guardada é sempre a menor/mais enxuta
+    encontrada primeiro (`mapa.setdefault` não sobrescreve).
+
+    Se `teto_centavos` for informado, poda qualquer ramo cuja soma parcial já
+    ultrapasse esse teto - usado aqui pra não perder tempo somando
+    combinações de pagamentos maiores que qualquer soma de OBs que faça
+    sentido consultar depois. `limite` é a mesma trava de `LIMITE_COMBINACOES`:
+    se o número de combinações possíveis (n escolhe k) for grande demais pra
+    um dado tamanho, esse tamanho é pulado."""
+    ordenado = sorted(itens, key=lambda it: _centavos(valor_fn(it)))
+    valores = [_centavos(valor_fn(it)) for it in ordenado]
+    n = len(ordenado)
+    mapa = {}
+
+    for tamanho in range(1, min(max_tamanho, n) + 1):
+        if math.comb(n, tamanho) > limite:
+            continue
+        escolhidos = [0] * tamanho
+
+        def rec(inicio, k, soma_parcial):
+            if k == tamanho:
+                mapa.setdefault(soma_parcial, tuple(ordenado[i] for i in escolhidos))
+                return
+            limite_i = n - (tamanho - k)
+            for i in range(inicio, limite_i + 1):
+                nova_soma = soma_parcial + valores[i]
+                if teto_centavos is not None and nova_soma > teto_centavos:
+                    # itens[i:] só tem valores >= valores[i] (lista ordenada),
+                    # então nenhum item a partir daqui cabe mais no teto
+                    break
+                escolhidos[k] = i
+                rec(i + 1, k + 1, nova_soma)
+
+        rec(0, 0, 0)
+
+    return mapa
+
+
+def _buscar_combo_obs_pagamentos(obs_disponiveis, pagamentos_disponiveis, max_tamanho_ob, max_tamanho_pag):
+    """Última tentativa de conciliação (prioridade 4, ver docstring do
+    módulo): quando uma OB isolada não bate com nenhum pagamento nem
+    combinação de pagamentos, tenta somar 2 ou mais OBs entre si (dentre as
+    que já sobraram sem match) e ver se essa soma bate com um pagamento ou
+    combinação de pagamentos ainda disponível - caso real de várias remessas
+    (OBs) que na prática saíram juntas num único lote/pagamento.
+
+    Para não repetir uma busca combinatória cara a cada combinação de OBs
+    testada, as somas possíveis do lado dos pagamentos são pré-computadas
+    UMA VEZ (`_enumerar_somas`), e cada combinação de OBs só faz uma consulta
+    O(1) nesse mapa em vez de refazer a busca inteira do zero. Isso troca
+    "combinações de OBs" x "busca exaustiva de pagamentos" (multiplicativo,
+    caro) por "combinações de OBs" + "combinações de pagamentos" (aditivo).
+
+    Diferente da prioridade 1-3 (que prioriza pagamentos fisicamente
+    próximos entre si via `_score_proximidade`), esta etapa não aplica esse
+    desempate por proximidade - prioriza apenas o menor número de itens dos
+    dois lados, o que já cobre o caso típico (poucas OBs somadas contra
+    poucos pagamentos somados).
+
+    `obs_disponiveis` é uma lista de (linha, codigo, valor); a busca
+    considera combinações de tamanho `2` até `max_tamanho_ob` (limitado ao
+    número de OBs disponíveis). Devolve (combo_obs, combo_pagamentos) ou
+    None se nada bater. combo_obs é uma tupla de (linha, codigo, valor);
+    combo_pagamentos é uma tupla de (linha, quantia)."""
+    obs_ordenadas = sorted(obs_disponiveis, key=lambda x: x[2], reverse=True)
+    n_obs = len(obs_ordenadas)
+    max_tamanho_ob = min(max_tamanho_ob, n_obs)
+    if max_tamanho_ob < 2 or not pagamentos_disponiveis:
+        return None
+
+    # teto: nenhuma combinação de OBs testada aqui passa da soma das
+    # `max_tamanho_ob` maiores OBs disponíveis - usado pra podar a
+    # enumeração de somas de pagamentos e não desperdiçar tempo somando
+    # combinações de pagamentos maiores que qualquer alvo plausível
+    teto_centavos = sum(_centavos(v) for _, _, v in obs_ordenadas[:max_tamanho_ob])
+
+    mapa_pagamentos = _enumerar_somas(
+        pagamentos_disponiveis, valor_fn=lambda p: p[1],
+        max_tamanho=max_tamanho_pag, teto_centavos=teto_centavos,
+    )
+    if not mapa_pagamentos:
+        return None
+
+    for tamanho in range(2, max_tamanho_ob + 1):
+        if math.comb(n_obs, tamanho) > LIMITE_COMBINACOES:
+            # combinatória grande demais pra esse tamanho de combo de OBs -
+            # pula pro próximo tamanho em vez de arriscar travar
+            continue
+        for combo_obs in itertools.combinations(obs_ordenadas, tamanho):
+            alvo = sum(_centavos(valor) for _, _, valor in combo_obs)
+            combo_pagamentos = mapa_pagamentos.get(alvo)
+            if combo_pagamentos is not None:
+                return combo_obs, combo_pagamentos
+
+    return None
+
+
+def conciliar_pagamentos_obs_aba(ws, max_combinacao=15, max_combinacao_obs=6):
     """Concilia pagamentos com OBs dentro de UMA aba. Devolve um dict com o
     relatório, ou None se a aba não tiver a estrutura esperada (bloco de
     Pagamentos e/ou tabela OB/VALOR)."""
@@ -402,9 +529,62 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=15):
 
     disponiveis = list(pagamentos)  # (linha, quantia) ainda não atrelados a nenhuma OB
     grupos = []
-    obs_sem_match = []
 
+    # --- Prioridade 1: match exato de UM único pagamento, pra TODAS as OBs
+    #     primeiro (sem ambiguidade, não depende de nenhuma combinação) ---
+    obs_pendentes = []
     for ob_row, ob_codigo, valor in obs_ordenadas:
+        alvo = _centavos(valor)
+        pagamento_exato = next(
+            (p for p in disponiveis if _centavos(p[1]) == alvo), None
+        )
+        if pagamento_exato is None:
+            obs_pendentes.append((ob_row, ob_codigo, valor))
+            continue
+        grupos.append({
+            "ob_rows": [ob_row],
+            "ob_codigos": [ob_codigo],
+            "valor": valor,
+            "pagamento_rows": [pagamento_exato[0]],
+        })
+        disponiveis.remove(pagamento_exato)
+
+    # --- Prioridade 2: combinações de 2+ OBs (dentre as que sobraram) vs
+    #     combinações de pagamentos - ver comentário na docstring do módulo
+    #     sobre por que isso roda ANTES da prioridade 3. Repete a busca até
+    #     não achar mais nenhuma combinação, já que cada match muda o que
+    #     ainda está disponível dos dois lados. ---
+    while len(obs_pendentes) >= 2 and disponiveis:
+        resultado_combo = _buscar_combo_obs_pagamentos(
+            obs_pendentes, disponiveis, max_combinacao_obs, max_combinacao
+        )
+        if resultado_combo is None:
+            break
+
+        combo_obs, combo_pagamentos = resultado_combo
+        ob_rows = [ob_row for ob_row, _, _ in combo_obs]
+        ob_codigos = [ob_codigo for _, ob_codigo, _ in combo_obs]
+        valor_total = sum(valor for _, _, valor in combo_obs)
+        linhas_pagamento = [linha for linha, _ in combo_pagamentos]
+
+        grupos.append({
+            "ob_rows": ob_rows,
+            "ob_codigos": ob_codigos,
+            "valor": valor_total,
+            "pagamento_rows": linhas_pagamento,
+        })
+
+        usados_obs = set(ob_rows)
+        obs_pendentes = [o for o in obs_pendentes if o[0] not in usados_obs]
+        usados_pag = set(linhas_pagamento)
+        disponiveis = [p for p in disponiveis if p[0] not in usados_pag]
+
+    # --- Prioridades 3 e 4: pra quem ainda sobrou, OB isolada vs combinação
+    #     de 2+ pagamentos (`_buscar_subconjunto` já cuida internamente de
+    #     priorizar pagamentos próximos entre si antes de aceitar qualquer
+    #     combinação exaustiva) ---
+    obs_sem_match = []
+    for ob_row, ob_codigo, valor in obs_pendentes:
         alvo = _centavos(valor)
         combo = _buscar_subconjunto(disponiveis, alvo, max_combinacao)
         if combo is None:
@@ -412,8 +592,8 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=15):
             continue
         linhas_pagamento = [linha for linha, _ in combo]
         grupos.append({
-            "ob_row": ob_row,
-            "ob_codigo": ob_codigo,
+            "ob_rows": [ob_row],
+            "ob_codigos": [ob_codigo],
             "valor": valor,
             "pagamento_rows": linhas_pagamento,
         })
@@ -425,8 +605,9 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=15):
         cor = CORES_CONCILIACAO[i % len(CORES_CONCILIACAO)]
         fill = PatternFill("solid", fgColor=cor)
 
-        for col in (col_ob, col_valor):
-            ws.cell(row=grupo["ob_row"], column=col).fill = fill
+        for ob_row in grupo["ob_rows"]:
+            for col in (col_ob, col_valor):
+                ws.cell(row=ob_row, column=col).fill = fill
 
         for linha in grupo["pagamento_rows"]:
             for col in range(1, NUM_COLS_PRINCIPAL + 1):
@@ -441,7 +622,7 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=15):
     }
 
 
-def conciliar_pagamentos_obs(caminho, max_combinacao=6, abas=None):
+def conciliar_pagamentos_obs(caminho, max_combinacao=6, max_combinacao_obs=6, abas=None):
     wb = openpyxl.load_workbook(caminho)
     abas_selecionadas = _normalizar_abas(abas)
     abas_alvo = abas_selecionadas or wb.sheetnames
@@ -453,7 +634,9 @@ def conciliar_pagamentos_obs(caminho, max_combinacao=6, abas=None):
             continue
 
         ws = wb[nome]
-        resultado = conciliar_pagamentos_obs_aba(ws, max_combinacao=max_combinacao)
+        resultado = conciliar_pagamentos_obs_aba(
+            ws, max_combinacao=max_combinacao, max_combinacao_obs=max_combinacao_obs
+        )
         if resultado is not None:
             resultados.append(resultado)
 
@@ -464,11 +647,13 @@ def conciliar_pagamentos_obs(caminho, max_combinacao=6, abas=None):
         return
 
     for res in resultados:
-        print(f"\n[{res['aba']}] OBs conciliadas: {len(res['grupos'])} de {res['total_obs']}")
+        n_obs_conciliadas = sum(len(grupo["ob_rows"]) for grupo in res["grupos"])
+        print(f"\n[{res['aba']}] OBs conciliadas: {n_obs_conciliadas} de {res['total_obs']} (em {len(res['grupos'])} grupo(s))")
         for grupo in res["grupos"]:
             n_pag = len(grupo["pagamento_rows"])
             composicao = "1 pagamento" if n_pag == 1 else f"{n_pag} pagamentos somados"
-            print(f"  OB {grupo['ob_codigo']} (R$ {grupo['valor']:.2f}) <- {composicao}, linha(s) {grupo['pagamento_rows']}")
+            obs_str = " + ".join(str(c) for c in grupo["ob_codigos"])
+            print(f"  OB(s) {obs_str} (R$ {grupo['valor']:.2f} total) <- {composicao}, linha(s) {grupo['pagamento_rows']}")
 
         if res["obs_sem_match"]:
             print(f"  ⚠️  ATENÇÃO: {len(res['obs_sem_match'])} OB(s) SEM correspondência encontrada nesta aba!")
@@ -635,7 +820,7 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_sem_ob, indice_extrato):
     }
 
 
-def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_combinacao=6, abas=None):
+def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_combinacao=6, max_combinacao_obs=6, abas=None):
     """Roda a conciliação normal (pagamento <-> OB) e, para o que sobrar sem
     match, cruza com saida.xlsx por Data+Valor para preencher Status /
     Justificativas. Salva o resultado em `caminho_conciliacao`."""
@@ -651,11 +836,14 @@ def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_
             continue
 
         ws = wb[nome]
-        resultado_conciliacao = conciliar_pagamentos_obs_aba(ws, max_combinacao=max_combinacao)
+        resultado_conciliacao = conciliar_pagamentos_obs_aba(
+            ws, max_combinacao=max_combinacao, max_combinacao_obs=max_combinacao_obs
+        )
         if resultado_conciliacao is None:
             continue
 
-        print(f"\n[{nome}] OBs conciliadas: {len(resultado_conciliacao['grupos'])} de {resultado_conciliacao['total_obs']}")
+        n_obs_conciliadas = sum(len(grupo["ob_rows"]) for grupo in resultado_conciliacao["grupos"])
+        print(f"\n[{nome}] OBs conciliadas: {n_obs_conciliadas} de {resultado_conciliacao['total_obs']} (em {len(resultado_conciliacao['grupos'])} grupo(s))")
 
         relatorio = atualizar_status_sem_conciliacao_aba(
             ws, resultado_conciliacao["pagamentos_sem_ob"], indice_extrato
@@ -688,6 +876,7 @@ if __name__ == "__main__":
     parser.add_argument("caminho", nargs="?", default="conciliacao.xlsx", help="Caminho da planilha Excel")
     parser.add_argument("--aba", "--abas", dest="abas", action="append", help="Nome da aba a ser processada. Pode ser informado mais de uma vez.")
     parser.add_argument("--extratos", dest="extratos", default=None, help="Caminho da planilha de extratos (saida.xlsx). Se informado, roda também o passo 3 (marcar TARIFA / CONTAS A PAGAR nos pagamentos sem OB).")
+    parser.add_argument("--max-combinacao-obs", dest="max_combinacao_obs", type=int, default=6, help="Tamanho máximo de combinação de OBs (2 ou mais) testada na prioridade 4, quando OBs isoladas não batem com nenhum pagamento. Padrão: 6.")
     args = parser.parse_args()
 
     remover_valor_zero(args.caminho, abas=args.abas)
@@ -696,6 +885,8 @@ if __name__ == "__main__":
     if args.extratos:
         # já conciliamos por OB dentro de atualizar_status_sem_conciliacao,
         # então não precisa chamar conciliar_pagamentos_obs de novo aqui.
-        atualizar_status_sem_conciliacao(args.caminho, args.extratos, abas=args.abas)
+        atualizar_status_sem_conciliacao(
+            args.caminho, args.extratos, max_combinacao_obs=args.max_combinacao_obs, abas=args.abas
+        )
     else:
-        conciliar_pagamentos_obs(args.caminho, abas=args.abas)
+        conciliar_pagamentos_obs(args.caminho, max_combinacao_obs=args.max_combinacao_obs, abas=args.abas)
