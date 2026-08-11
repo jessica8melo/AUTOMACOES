@@ -12,10 +12,20 @@ Passo 1: em cada aba, remove da tabela de OBs (colunas "OB"/"VALOR") todas
 as linhas em que VALOR = 0.
 
 Passo 2: em cada aba, concilia pagamento(s) com OB dentro dessa mesma aba.
-Para cada OB, procura um pagamento (ou uma combinação de pagamentos ainda
-não usados) cuja soma bata exatamente com o VALOR da OB. Quando acha, pinta
-a(s) linha(s) do(s) pagamento(s) e a linha da OB com a mesma cor, deixando
-visualmente claro quem está atrelado a quem.
+Para cada OB, a busca por pagamento(s) segue uma ordem de prioridade:
+
+    1) Match exato de UM único pagamento cujo valor bate com o da OB.
+       Se existir, é usado na hora, sem procurar combinações.
+    2) Combinações de 2 ou mais pagamentos cuja soma bate com o valor da
+       OB, dando preferência para pagamentos que estejam fisicamente
+       próximos entre si na planilha (idealmente na linha logo abaixo ou
+       logo acima um do outro).
+    3) Se nada acima servir, vale qualquer combinação exata encontrada pela
+       busca exaustiva (com poda), mesmo que os pagamentos estejam
+       espalhados/longe uns dos outros.
+
+Quando acha, pinta a(s) linha(s) do(s) pagamento(s) e a linha da OB com a
+mesma cor, deixando visualmente claro quem está atrelado a quem.
 
 Abas sem bloco de Pagamentos e/ou sem tabela OB/VALOR são ignoradas (nada é
 alterado nelas).
@@ -24,6 +34,7 @@ Uso:
     python processar_pagamentos.py caminho_da_planilha.xlsx
 """
 
+import argparse
 import sys
 
 import openpyxl
@@ -164,12 +175,27 @@ def remover_valor_zero_aba(ws):
     return removidas, len(linhas_filtradas)
 
 
-def remover_valor_zero(caminho):
+def _normalizar_abas(abas):
+    """Normaliza a entrada de abas para uma lista de nomes."""
+    if abas is None:
+        return None
+    if isinstance(abas, str):
+        return [abas]
+    return list(abas)
+
+
+def remover_valor_zero(caminho, abas=None):
     wb = openpyxl.load_workbook(caminho)
+    abas_selecionadas = _normalizar_abas(abas)
+    abas_alvo = abas_selecionadas or wb.sheetnames
 
     total_removidas = 0
     abas_processadas = 0
-    for nome in wb.sheetnames:
+    for nome in abas_alvo:
+        if nome not in wb.sheetnames:
+            print(f"Aba '{nome}' não encontrada. Ignorando.")
+            continue
+
         ws = wb[nome]
         resultado = remover_valor_zero_aba(ws)
         if resultado is None:
@@ -230,12 +256,38 @@ def _linhas_ob_com_linha(ws, col_ob, col_valor, linha_inicial):
     return linhas
 
 
-def _buscar_subconjunto(pagamentos_disponiveis, alvo_centavos, max_tamanho):
-    """Procura, do menor pro maior tamanho, uma combinação de pagamentos
-    (linha, quantia) cuja soma em centavos bate exatamente com o alvo.
-    Devolve a combinação (tupla de (linha, quantia)) ou None.
+def _score_proximidade(combo):
+    """Gera uma penalidade para combinações de 2+ pagamentos cujas linhas
+    estão mais distantes entre si na planilha. Menor score é melhor. Dá
+    peso extra para sequências contíguas (linhas vizinhas), que é o que
+    queremos priorizar quando um único pagamento não bate exato com a OB.
 
-    Usa busca com poda (branch and bound) em vez de testar todas as
+    Usada apenas para desempate ENTRE combinações de 2+ itens - o caso de
+    um único pagamento com valor exato é tratado à parte, antes disso, em
+    `_buscar_subconjunto`."""
+    linhas = sorted(linha for linha, _ in combo)
+    span = linhas[-1] - linhas[0]
+    gaps = [b - a for a, b in zip(linhas, linhas[1:])]
+    contiguas = sum(1 for gap in gaps if gap == 1)
+    return (span, sum(gaps), -contiguas, linhas[0])
+
+
+def _buscar_subconjunto(pagamentos_disponiveis, alvo_centavos, max_tamanho):
+    """Procura pagamento(s) cuja soma bate exatamente com `alvo_centavos`,
+    seguindo esta ordem de prioridade:
+
+        1) Match exato de UM único pagamento (retorna na hora, sem olhar
+           para combinações de 2+ itens).
+        2) Combinações de 2 ou mais pagamentos, priorizando as que usam
+           pagamentos mais próximos entre si na planilha (idealmente linhas
+           vizinhas / contíguas) - ver `_score_proximidade`.
+        3) Se não houver combinação "próxima", qualquer combinação exata
+           encontrada pela busca com poda serve (tentativa e erro geral,
+           sem preferência de posição).
+
+    Devolve a combinação (tupla de (linha, quantia)) ou None se nada bater.
+
+    A busca em si usa poda (branch and bound) em vez de testar todas as
     combinações via itertools.combinations: os pagamentos são ordenados por
     valor, e a recursão corta um ramo assim que a soma parcial já passa do
     alvo (como a lista está em ordem crescente, os itens seguintes só
@@ -247,23 +299,52 @@ def _buscar_subconjunto(pagamentos_disponiveis, alvo_centavos, max_tamanho):
     n = len(itens)
     max_tamanho = min(max_tamanho, n)
 
-    for tamanho in range(1, max_tamanho + 1):
+    # --- Prioridade 1: pagamento único com valor exatamente igual ao da OB ---
+    for item, valor_centavos in zip(itens, valores):
+        if valor_centavos == alvo_centavos:
+            return (item,)
+
+    # --- Prioridades 2 e 3: combinações de 2+ itens, do menor pro maior
+    #     tamanho, com desempate por proximidade entre linhas ---
+    melhor_combo = None
+    melhor_score = None
+
+    for tamanho in range(2, max_tamanho + 1):
         combo = _buscar_tamanho_fixo(itens, valores, alvo_centavos, tamanho)
-        if combo is not None:
-            return combo
-    return None
+        if combo is None:
+            continue
+
+        score = _score_proximidade(combo)
+        if melhor_combo is None or score < melhor_score:
+            melhor_combo = combo
+            melhor_score = score
+
+    return melhor_combo
 
 
 def _buscar_tamanho_fixo(itens, valores, alvo, tamanho):
     """Busca com poda por uma combinação de exatamente `tamanho` itens (já
     ordenados por valor crescente em `itens`/`valores`) cuja soma bata com
-    `alvo`. Devolve a tupla de itens ou None."""
+    `alvo`. Devolve a tupla de itens ou None. Quando houver múltiplas
+    combinações exatas desse mesmo tamanho, a melhor é escolhida pelo
+    critério de proximidade entre linhas (`_score_proximidade`)."""
     n = len(itens)
     escolhidos = [0] * tamanho
+    melhor_combo = None
 
     def rec(inicio, k, soma_parcial):
+        nonlocal melhor_combo
         if k == tamanho:
-            return soma_parcial == alvo
+            if soma_parcial == alvo:
+                combo = tuple(itens[i] for i in escolhidos)
+                if melhor_combo is None:
+                    melhor_combo = combo
+                else:
+                    atual_score = _score_proximidade(combo)
+                    melhor_score = _score_proximidade(melhor_combo)
+                    if atual_score < melhor_score:
+                        melhor_combo = combo
+            return
         # não vale a pena tentar índices onde não sobram itens suficientes
         # para completar os `tamanho - k` restantes
         limite = n - (tamanho - k)
@@ -274,13 +355,11 @@ def _buscar_tamanho_fixo(itens, valores, alvo, tamanho):
                 # então nenhum item a partir daqui pode mais servir
                 break
             escolhidos[k] = i
-            if rec(i + 1, k + 1, nova_soma):
-                return True
-        return False
+            rec(i + 1, k + 1, nova_soma)
+        return None
 
-    if rec(0, 0, 0):
-        return tuple(itens[i] for i in escolhidos)
-    return None
+    rec(0, 0, 0)
+    return melhor_combo
 
 
 def conciliar_pagamentos_obs_aba(ws, max_combinacao=15):
@@ -342,11 +421,17 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=15):
     }
 
 
-def conciliar_pagamentos_obs(caminho, max_combinacao=6):
+def conciliar_pagamentos_obs(caminho, max_combinacao=6, abas=None):
     wb = openpyxl.load_workbook(caminho)
+    abas_selecionadas = _normalizar_abas(abas)
+    abas_alvo = abas_selecionadas or wb.sheetnames
 
     resultados = []
-    for nome in wb.sheetnames:
+    for nome in abas_alvo:
+        if nome not in wb.sheetnames:
+            print(f"Aba '{nome}' não encontrada. Ignorando.")
+            continue
+
         ws = wb[nome]
         resultado = conciliar_pagamentos_obs_aba(ws, max_combinacao=max_combinacao)
         if resultado is not None:
@@ -395,7 +480,11 @@ def conciliar_pagamentos_obs(caminho, max_combinacao=6):
 
 
 if __name__ == "__main__":
-    caminho = sys.argv[1] if len(sys.argv) > 1 else "conciliacao.xlsx"
-    remover_valor_zero(caminho)
+    parser = argparse.ArgumentParser(description="Processa pagamentos e OBs em uma planilha Excel.")
+    parser.add_argument("caminho", nargs="?", default="conciliacao.xlsx", help="Caminho da planilha Excel")
+    parser.add_argument("--aba", "--abas", dest="abas", action="append", help="Nome da aba a ser processada. Pode ser informado mais de uma vez.")
+    args = parser.parse_args()
+
+    remover_valor_zero(args.caminho, abas=args.abas)
     print()
-    conciliar_pagamentos_obs(caminho)
+    conciliar_pagamentos_obs(args.caminho, abas=args.abas)
