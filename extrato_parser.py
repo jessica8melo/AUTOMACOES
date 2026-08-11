@@ -8,10 +8,6 @@ do BB e extrai:
   - Dia (ou período) do extrato
   - Lançamentos: histórico, documento, valor e se é Recebimento (C) ou Pagamento (D)
 
-A extração usa as TABELAS do PDF (pdfplumber), não o texto corrido — isso deixa o
-parsing muito mais confiável, inclusive em extratos com muitas linhas e múltiplas
-páginas.
-
 Uso:
     # um único PDF
     python extrato_bb_parser.py extrato.pdf
