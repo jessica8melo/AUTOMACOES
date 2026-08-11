@@ -30,8 +30,28 @@ mesma cor, deixando visualmente claro quem está atrelado a quem.
 Abas sem bloco de Pagamentos e/ou sem tabela OB/VALOR são ignoradas (nada é
 alterado nelas).
 
+Passo 3 (opcional, roda só se --extratos for informado): para os pagamentos
+que sobraram sem OB correspondente no Passo 2, cruza cada um com a tabela de
+PAGAMENTOS da planilha de extratos (saida.xlsx, gerada por outro script a
+partir dos extratos bancários), usando como chave a combinação Data
+Transação + Quantia (comparado com Data + Valor (R$) do extrato). Para cada
+pagamento sem OB:
+
+    1) Se achar uma linha do extrato com a mesma Data+Valor e o Histórico
+       dela começar com "Tarifa", preenche a coluna "Status" com "TARIFA".
+    2) Se achar e não for tarifa, preenche "Status" com o texto do
+       Histórico do extrato e a coluna "Justificativas - Não reconciliadas"
+       com "MANDAR PARA CONTAS A PAGAR".
+    3) Se não achar nenhuma linha do extrato com aquela Data+Valor, a linha
+       é deixada como está (fica sinalizada no log para conferência
+       manual).
+
+Se mais de uma linha do extrato bater com a mesma Data+Valor (ambíguo), a
+primeira encontrada é usada, mas o caso é destacado no log para revisão.
+
 Uso:
     python processar_pagamentos.py caminho_da_planilha.xlsx
+    python processar_pagamentos.py caminho_da_planilha.xlsx --extratos saida.xlsx
 """
 
 import argparse
@@ -479,12 +499,203 @@ def conciliar_pagamentos_obs(caminho, max_combinacao=6, abas=None):
         print("\n✅ Todas as OBs foram conciliadas com sucesso em todas as abas.")
 
 
+# ---------------------------------------------------------------------------
+# Passo 3: para pagamentos que sobraram SEM conciliação (nenhuma OB bateu),
+# cruzar com a tabela de extratos (saida.xlsx) por Data + Valor e preencher
+# Status / Justificativas.
+# ---------------------------------------------------------------------------
+
+MESES_PT = {
+    "jan": 1, "fev": 2, "mar": 3, "abr": 4, "mai": 5, "jun": 6,
+    "jul": 7, "ago": 8, "set": 9, "out": 10, "nov": 11, "dez": 12,
+}
+
+COL_STATUS = 6
+COL_JUSTIFICATIVA = 7
+JUSTIFICATIVA_CONTAS_A_PAGAR = "MANDAR PARA CONTAS A PAGAR"
+
+
+def _data_para_tupla(valor):
+    """Aceita tanto 'dd/mmm/aa' (conciliacao.xlsx, ex 27/jul/26) quanto
+    'dd/mm/aaaa' (saida.xlsx, ex 27/07/2026) e devolve (ano, mes, dia), ou
+    None se não conseguir interpretar."""
+    if valor is None:
+        return None
+    partes = str(valor).strip().split("/")
+    if len(partes) != 3:
+        return None
+    dia_str, mes_str, ano_str = partes
+    try:
+        dia = int(dia_str)
+    except ValueError:
+        return None
+
+    if mes_str.isdigit():
+        mes = int(mes_str)
+    else:
+        mes = MESES_PT.get(mes_str.strip().lower()[:3])
+        if mes is None:
+            return None
+
+    try:
+        ano = int(ano_str)
+    except ValueError:
+        return None
+    if ano < 100:
+        ano += 2000
+
+    return (ano, mes, dia)
+
+
+def _ler_pagamentos_extrato_aba(ws):
+    """Lê a tabela de PAGAMENTOS de uma aba de saida.xlsx (colunas
+    Data/Histórico/Documento/Valor). Devolve [(data, histórico, valor)]."""
+    linha_titulo = localizar_titulo(ws, "PAGAMENTOS")
+    if linha_titulo is None:
+        return []
+
+    linhas = []
+    r = linha_titulo + 2  # +1 cabeçalho de colunas, +2 primeira linha de dado
+    while True:
+        data = ws.cell(row=r, column=1).value
+        if data is None:
+            break
+        historico = ws.cell(row=r, column=2).value
+        valor = ws.cell(row=r, column=4).value
+        if isinstance(valor, (int, float)):
+            linhas.append((data, historico, valor))
+        r += 1
+    return linhas
+
+
+def _indexar_extrato(caminho_extratos):
+    """Monta um índice (ano, mes, dia, valor_em_centavos) -> [(aba,
+    histórico), ...] a partir de todas as abas de PAGAMENTOS em
+    saida.xlsx."""
+    wb = openpyxl.load_workbook(caminho_extratos, data_only=True)
+    indice = {}
+    for nome in wb.sheetnames:
+        ws = wb[nome]
+        for data, historico, valor in _ler_pagamentos_extrato_aba(ws):
+            chave_data = _data_para_tupla(data)
+            if chave_data is None:
+                continue
+            chave = (*chave_data, _centavos(valor))
+            indice.setdefault(chave, []).append((nome, historico))
+    return indice
+
+
+def atualizar_status_sem_conciliacao_aba(ws, pagamentos_sem_ob, indice_extrato):
+    """Para cada pagamento sem OB correspondente (linha, quantia), procura a
+    mesma Data+Valor na tabela de extratos:
+      - se achar e o Histórico começar com 'Tarifa' -> Status = 'TARIFA'
+      - se achar e não for tarifa -> Status = Histórico do extrato,
+        Justificativas = 'MANDAR PARA CONTAS A PAGAR'
+      - se não achar nenhuma correspondência -> nada é alterado (fica para
+        conferência manual).
+    Devolve um relatório (listas de linhas tratadas como tarifa, mandadas
+    pra contas a pagar, sem correspondência no extrato e ambíguas)."""
+    tratados_tarifa = []
+    tratados_contas_a_pagar = []
+    sem_correspondencia = []
+    ambiguos = []
+
+    for linha, quantia in pagamentos_sem_ob:
+        data_transacao = ws.cell(row=linha, column=4).value
+        chave_data = _data_para_tupla(data_transacao)
+        if chave_data is None:
+            sem_correspondencia.append((linha, quantia))
+            continue
+
+        chave = (*chave_data, _centavos(quantia))
+        candidatos = indice_extrato.get(chave)
+        if not candidatos:
+            sem_correspondencia.append((linha, quantia))
+            continue
+
+        if len(candidatos) > 1:
+            ambiguos.append((linha, quantia, candidatos))
+
+        aba_origem, historico = candidatos[0]
+        historico_str = str(historico or "").strip()
+
+        if historico_str.lower().startswith("tarifa"):
+            ws.cell(row=linha, column=COL_STATUS, value="TARIFA")
+            tratados_tarifa.append((linha, quantia, aba_origem, historico_str))
+        else:
+            ws.cell(row=linha, column=COL_STATUS, value=historico_str)
+            ws.cell(row=linha, column=COL_JUSTIFICATIVA, value=JUSTIFICATIVA_CONTAS_A_PAGAR)
+            tratados_contas_a_pagar.append((linha, quantia, aba_origem, historico_str))
+
+    return {
+        "tarifa": tratados_tarifa,
+        "contas_a_pagar": tratados_contas_a_pagar,
+        "sem_correspondencia": sem_correspondencia,
+        "ambiguos": ambiguos,
+    }
+
+
+def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_combinacao=6, abas=None):
+    """Roda a conciliação normal (pagamento <-> OB) e, para o que sobrar sem
+    match, cruza com saida.xlsx por Data+Valor para preencher Status /
+    Justificativas. Salva o resultado em `caminho_conciliacao`."""
+    indice_extrato = _indexar_extrato(caminho_extratos)
+
+    wb = openpyxl.load_workbook(caminho_conciliacao)
+    abas_selecionadas = _normalizar_abas(abas)
+    abas_alvo = abas_selecionadas or wb.sheetnames
+
+    for nome in abas_alvo:
+        if nome not in wb.sheetnames:
+            print(f"Aba '{nome}' não encontrada em {caminho_conciliacao}. Ignorando.")
+            continue
+
+        ws = wb[nome]
+        resultado_conciliacao = conciliar_pagamentos_obs_aba(ws, max_combinacao=max_combinacao)
+        if resultado_conciliacao is None:
+            continue
+
+        print(f"\n[{nome}] OBs conciliadas: {len(resultado_conciliacao['grupos'])} de {resultado_conciliacao['total_obs']}")
+
+        relatorio = atualizar_status_sem_conciliacao_aba(
+            ws, resultado_conciliacao["pagamentos_sem_ob"], indice_extrato
+        )
+
+        print(f"\n[{nome}] Pagamentos sem conciliação (OB): {len(resultado_conciliacao['pagamentos_sem_ob'])}")
+        print(f"  -> Marcados como TARIFA: {len(relatorio['tarifa'])}")
+        for linha, quantia, aba_origem, historico in relatorio["tarifa"]:
+            print(f"     linha {linha} (R$ {quantia:.2f}) <- [{aba_origem}] {historico}")
+
+        print(f"  -> Marcados p/ CONTAS A PAGAR: {len(relatorio['contas_a_pagar'])}")
+        for linha, quantia, aba_origem, historico in relatorio["contas_a_pagar"]:
+            print(f"     linha {linha} (R$ {quantia:.2f}) <- [{aba_origem}] {historico}")
+
+        if relatorio["sem_correspondencia"]:
+            print(f"  ⚠️  Sem correspondência nenhuma no extrato: {len(relatorio['sem_correspondencia'])}")
+            for linha, quantia in relatorio["sem_correspondencia"]:
+                print(f"     linha {linha} (R$ {quantia:.2f}) - conferir manualmente")
+
+        if relatorio["ambiguos"]:
+            print(f"  ⚠️  Data+Valor batendo com MAIS de uma linha do extrato (usada a primeira encontrada): {len(relatorio['ambiguos'])}")
+            for linha, quantia, candidatos in relatorio["ambiguos"]:
+                print(f"     linha {linha} (R$ {quantia:.2f}) candidatos: {candidatos}")
+
+    wb.save(caminho_conciliacao)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Processa pagamentos e OBs em uma planilha Excel.")
     parser.add_argument("caminho", nargs="?", default="conciliacao.xlsx", help="Caminho da planilha Excel")
     parser.add_argument("--aba", "--abas", dest="abas", action="append", help="Nome da aba a ser processada. Pode ser informado mais de uma vez.")
+    parser.add_argument("--extratos", dest="extratos", default=None, help="Caminho da planilha de extratos (saida.xlsx). Se informado, roda também o passo 3 (marcar TARIFA / CONTAS A PAGAR nos pagamentos sem OB).")
     args = parser.parse_args()
 
     remover_valor_zero(args.caminho, abas=args.abas)
     print()
-    conciliar_pagamentos_obs(args.caminho, abas=args.abas)
+
+    if args.extratos:
+        # já conciliamos por OB dentro de atualizar_status_sem_conciliacao,
+        # então não precisa chamar conciliar_pagamentos_obs de novo aqui.
+        atualizar_status_sem_conciliacao(args.caminho, args.extratos, abas=args.abas)
+    else:
+        conciliar_pagamentos_obs(args.caminho, abas=args.abas)
