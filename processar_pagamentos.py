@@ -72,6 +72,7 @@ Uso:
 """
 
 import argparse
+import datetime
 import itertools
 import math
 import sys
@@ -701,11 +702,18 @@ JUSTIFICATIVA_CONTAS_A_PAGAR = "MANDAR PARA CONTAS A PAGAR"
 
 
 def _data_para_tupla(valor):
-    """Aceita tanto 'dd/mmm/aa' (conciliacao.xlsx, ex 27/jul/26) quanto
-    'dd/mm/aaaa' (saida.xlsx, ex 27/07/2026) e devolve (ano, mes, dia), ou
-    None se não conseguir interpretar."""
+    """Aceita 'dd/mmm/aa' (ex 27/jul/26), 'dd/mm/aaaa' (ex 27/07/2026) e
+    também células de data reais do Excel (datetime.datetime / datetime.date,
+    como vem em algumas abas de conciliacao.xlsx). Devolve (ano, mes, dia),
+    ou None se não conseguir interpretar."""
     if valor is None:
         return None
+
+    if isinstance(valor, datetime.datetime):
+        return (valor.year, valor.month, valor.day)
+    if isinstance(valor, datetime.date):
+        return (valor.year, valor.month, valor.day)
+
     partes = str(valor).strip().split("/")
     if len(partes) != 3:
         return None
