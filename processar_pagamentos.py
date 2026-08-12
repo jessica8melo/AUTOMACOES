@@ -62,9 +62,9 @@ extrato). Para cada pagamento:
        ignorada - nada é preenchido.
     3) Se achar e não for nenhum dos dois casos acima, preenche "Status"
        com o texto do Histórico do extrato. A coluna "Justificativas - Não
-       reconciliadas" só recebe "MANDAR PARA CONTAS A PAGAR" quando o
-       pagamento NÃO tiver sido conciliado com nenhuma OB no Passo 2 (pra
-       pagamentos já conciliados, só o Status é preenchido).
+       reconciliadas" só recebe uma justificativa quando o pagamento NÃO
+       tiver sido conciliado com nenhuma OB no Passo 2 (pra pagamentos já
+       conciliados, só o Status é preenchido).
     4) Se não achar nenhuma linha do extrato com aquela Data+Valor, a linha
        é deixada como está (fica sinalizada no log para conferência
        manual).
@@ -317,6 +317,53 @@ def _score_proximidade(combo):
     gaps = [b - a for a, b in zip(linhas, linhas[1:])]
     contiguas = sum(1 for gap in gaps if gap == 1)
     return (span, sum(gaps), -contiguas, linhas[0])
+
+
+def _particionar_combo_por_ob(combo_obs, combo_pagamentos, max_tamanho):
+    """Quando um grupo junta 2+ OBs vs uma combinação de pagamentos, tenta
+    achar, dentro desses mesmos pagamentos, qual subconjunto bate exato com
+    o valor de CADA OB individualmente (ex.: OB A = pagamentos 1+2, OB B =
+    pagamentos 3+4). Usado só pra decidir a cor de cada linha na hora de
+    pintar - não muda a conciliação em si.
+
+    Vai das maiores OBs pras menores, indo tentando tirar do pool comum um
+    subconjunto exato pra cada uma (via `_buscar_subconjunto`); a última OB
+    fica com o que sobrar, sem outra busca, e só validando que a soma bate.
+
+    Devolve uma lista de dicts [{"ob_row", "ob_codigo", "valor",
+    "pagamento_rows"}, ...], um por OB, ou None se não achar uma divisão
+    exata (nesse caso quem chamou deve cair de volta pra pintar o grupo
+    inteiro com uma cor só)."""
+    obs_ordenadas = sorted(combo_obs, key=lambda x: x[2], reverse=True)
+    pool = list(combo_pagamentos)
+    particoes = []
+
+    for ob_row, ob_codigo, valor in obs_ordenadas[:-1]:
+        alvo = _centavos(valor)
+        combo = _buscar_subconjunto(pool, alvo, max_tamanho)
+        if combo is None:
+            return None
+        particoes.append({
+            "ob_row": ob_row,
+            "ob_codigo": ob_codigo,
+            "valor": valor,
+            "pagamento_rows": [linha for linha, _ in combo],
+        })
+        usados = set(linha for linha, _ in combo)
+        pool = [p for p in pool if p[0] not in usados]
+
+    # última OB fica com o restante - só confirma que a soma bate certinho
+    ultima_ob_row, ultima_ob_codigo, ultima_valor = obs_ordenadas[-1]
+    if not pool or _centavos(ultima_valor) != sum(_centavos(q) for _, q in pool):
+        return None
+    particoes.append({
+        "ob_row": ultima_ob_row,
+        "ob_codigo": ultima_ob_codigo,
+        "valor": ultima_valor,
+        "pagamento_rows": [linha for linha, _ in pool],
+    })
+
+    return particoes
 
 
 def _buscar_subconjunto(pagamentos_disponiveis, alvo_centavos, max_tamanho):
@@ -575,11 +622,18 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=15, max_combinacao_obs=6):
         valor_total = sum(valor for _, _, valor in combo_obs)
         linhas_pagamento = [linha for linha, _ in combo_pagamentos]
 
+        # tenta achar qual pagamento pertence a qual OB dentro do combo,
+        # só pra decidir a cor de cada um na hora de pintar (ver
+        # `_particionar_combo_por_ob`); se não achar uma divisão exata,
+        # o grupo inteiro é pintado com uma cor só, como antes.
+        particoes = _particionar_combo_por_ob(combo_obs, combo_pagamentos, max_combinacao)
+
         grupos.append({
             "ob_rows": ob_rows,
             "ob_codigos": ob_codigos,
             "valor": valor_total,
             "pagamento_rows": linhas_pagamento,
+            "particoes_pintura": particoes,
         })
 
         usados_obs = set(ob_rows)
@@ -608,18 +662,41 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=15, max_combinacao_obs=6):
         usados = set(linhas_pagamento)
         disponiveis = [p for p in disponiveis if p[0] not in usados]
 
-    # pinta os grupos conciliados
-    for i, grupo in enumerate(grupos):
-        cor = CORES_CONCILIACAO[i % len(CORES_CONCILIACAO)]
-        fill = PatternFill("solid", fgColor=cor)
+    # pinta os grupos conciliados. Cada "unidade visual" leva sua própria
+    # cor: pra grupo de OB única (prioridades 1, 3 e 4) a unidade é o
+    # grupo inteiro; pra grupo de OBs combinadas (prioridade 2) em que
+    # achamos qual pagamento pertence a qual OB (`particoes_pintura`), cada
+    # OB + seus pagamentos correspondentes vira uma unidade própria, com
+    # sua própria cor - só cai numa cor só pro grupo inteiro se essa
+    # divisão não foi possível. A fonte é sempre resetada pro padrão, pra
+    # não deixar resíduo de cor de letra de alguma rodada anterior.
+    cor_idx = 0
+    for grupo in grupos:
+        particoes = grupo.get("particoes_pintura")
+        if particoes:
+            unidades = [
+                {"ob_rows": [p["ob_row"]], "pagamento_rows": p["pagamento_rows"]}
+                for p in particoes
+            ]
+        else:
+            unidades = [{"ob_rows": grupo["ob_rows"], "pagamento_rows": grupo["pagamento_rows"]}]
 
-        for ob_row in grupo["ob_rows"]:
-            for col in (col_ob, col_valor):
-                ws.cell(row=ob_row, column=col).fill = fill
+        for unidade in unidades:
+            cor = CORES_CONCILIACAO[cor_idx % len(CORES_CONCILIACAO)]
+            cor_idx += 1
+            fill = PatternFill("solid", fgColor=cor)
 
-        for linha in grupo["pagamento_rows"]:
-            for col in range(1, NUM_COLS_PRINCIPAL + 1):
-                ws.cell(row=linha, column=col).fill = fill
+            for ob_row in unidade["ob_rows"]:
+                for col in (col_ob, col_valor):
+                    cell = ws.cell(row=ob_row, column=col)
+                    cell.fill = fill
+                    cell.font = NORMAL_FONT
+
+            for linha in unidade["pagamento_rows"]:
+                for col in range(1, NUM_COLS_PRINCIPAL + 1):
+                    cell = ws.cell(row=linha, column=col)
+                    cell.fill = fill
+                    cell.font = NORMAL_FONT
 
     return {
         "aba": ws.title,
@@ -706,7 +783,6 @@ MESES_PT = {
 
 COL_STATUS = 6
 COL_JUSTIFICATIVA = 7
-JUSTIFICATIVA_CONTAS_A_PAGAR = "MANDAR PARA CONTAS A PAGAR"
 
 
 def _data_para_tupla(valor):
@@ -797,9 +873,9 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliada
       - se achar e o Histórico for exatamente 'Pagamento' ou 'Pagamentos
         Diversos' -> nada é alterado (ignorado).
       - se achar e não for nenhum dos dois casos acima -> Status = texto do
-        Histórico do extrato; a Justificativa 'MANDAR PARA CONTAS A PAGAR'
-        só é preenchida se esse pagamento NÃO estiver em
-        `linhas_conciliadas` (ou seja, se ele tiver ficado sem OB).
+        Histórico do extrato; a Justificativa só é preenchida se esse
+        pagamento NÃO estiver em `linhas_conciliadas` (ou seja, se ele
+        tiver ficado sem OB).
       - se não achar nenhuma correspondência -> nada é alterado (fica para
         conferência manual).
     Devolve um relatório (listas de linhas tratadas como tarifa, mandadas
@@ -846,7 +922,6 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliada
         if linha in linhas_conciliadas:
             tratados_conciliados_com_status.append((linha, quantia, aba_origem, historico_str))
         else:
-            ws.cell(row=linha, column=COL_JUSTIFICATIVA, value=JUSTIFICATIVA_CONTAS_A_PAGAR)
             tratados_contas_a_pagar.append((linha, quantia, aba_origem, historico_str))
 
     return {
@@ -900,7 +975,7 @@ def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_
         for linha, quantia, aba_origem, historico in relatorio["tarifa"]:
             print(f"     linha {linha} (R$ {quantia:.2f}) <- [{aba_origem}] {historico}")
 
-        print(f"  -> Marcados p/ CONTAS A PAGAR (sem OB): {len(relatorio['contas_a_pagar'])}")
+        print(f"  -> Marcados sem OB: {len(relatorio['contas_a_pagar'])}")
         for linha, quantia, aba_origem, historico in relatorio["contas_a_pagar"]:
             print(f"     linha {linha} (R$ {quantia:.2f}) <- [{aba_origem}] {historico}")
 
@@ -930,8 +1005,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Processa pagamentos e OBs em uma planilha Excel.")
     parser.add_argument("caminho", nargs="?", default="conciliacao.xlsx", help="Caminho da planilha Excel")
     parser.add_argument("--aba", "--abas", dest="abas", action="append", help="Nome da aba a ser processada. Pode ser informado mais de uma vez.")
-    parser.add_argument("--extratos", dest="extratos", default=None, help="Caminho da planilha de extratos (saida.xlsx). Se informado, roda também o passo 3 (marcar TARIFA / CONTAS A PAGAR nos pagamentos sem OB).")
-    parser.add_argument("--max-combinacao-obs", dest="max_combinacao_obs", type=int, default=6, help="Tamanho máximo de combinação de OBs (2 ou mais) testada na prioridade 4, quando OBs isoladas não batem com nenhum pagamento. Padrão: 6.")
+    parser.add_argument("--extratos", dest="extratos", default=None, help="Caminho da planilha de extratos (saida.xlsx). Se informado, roda também o passo 3 (marcar TARIFA / status nos pagamentos sem OB).")
+    parser.add_argument("--max-combinacao-pagamentos", dest="max_combinacao", type=int, default=6, help="Tamanho máximo de combinação de pagamentos (2 ou mais) testada nas prioridades 3 e 4, quando uma OB isolada não bate com nenhum pagamento sozinho. Padrão: 6.")
     args = parser.parse_args()
 
     remover_valor_zero(args.caminho, abas=args.abas)
@@ -941,7 +1016,7 @@ if __name__ == "__main__":
         # já conciliamos por OB dentro de atualizar_status_sem_conciliacao,
         # então não precisa chamar conciliar_pagamentos_obs de novo aqui.
         atualizar_status_sem_conciliacao(
-            args.caminho, args.extratos, max_combinacao_obs=args.max_combinacao_obs, abas=args.abas
+            args.caminho, args.extratos, max_combinacao=args.max_combinacao, abas=args.abas
         )
     else:
-        conciliar_pagamentos_obs(args.caminho, max_combinacao_obs=args.max_combinacao_obs, abas=args.abas)
+        conciliar_pagamentos_obs(args.caminho, max_combinacao=args.max_combinacao, abas=args.abas)
