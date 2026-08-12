@@ -47,19 +47,25 @@ quem (inclusive quando o grupo tem mais de uma OB).
 Abas sem bloco de Pagamentos e/ou sem tabela OB/VALOR são ignoradas (nada é
 alterado nelas).
 
-Passo 3 (opcional, roda só se --extratos for informado): para os pagamentos
-que sobraram sem OB correspondente no Passo 2, cruza cada um com a tabela de
-PAGAMENTOS da planilha de extratos (saida.xlsx, gerada por outro script a
-partir dos extratos bancários), usando como chave a combinação Data
-Transação + Quantia (comparado com Data + Valor (R$) do extrato). Para cada
-pagamento sem OB:
+Passo 3 (opcional, roda só se --extratos for informado): cruza TODOS os
+pagamentos da aba (tenham ou não sido conciliados com uma OB no Passo 2)
+com a tabela de PAGAMENTOS da planilha de extratos (saida.xlsx, gerada por
+outro script a partir dos extratos bancários), usando como chave a
+combinação Data Transação + Quantia (comparado com Data + Valor (R$) do
+extrato). Para cada pagamento:
 
     1) Se achar uma linha do extrato com a mesma Data+Valor e o Histórico
-       dela começar com "Tarifa", preenche a coluna "Status" com "TARIFA".
-    2) Se achar e não for tarifa, preenche "Status" com o texto do
-       Histórico do extrato e a coluna "Justificativas - Não reconciliadas"
-       com "MANDAR PARA CONTAS A PAGAR".
-    3) Se não achar nenhuma linha do extrato com aquela Data+Valor, a linha
+       dela começar com "Tarifa", preenche a coluna "Status" com "TARIFA"
+       (independentemente do pagamento ter sido conciliado com uma OB).
+    2) Se achar e o Histórico for exatamente "Pagamento" ou "Pagamentos
+       Diversos" (sem contar maiúsculas/minúsculas e espaços), a linha é
+       ignorada - nada é preenchido.
+    3) Se achar e não for nenhum dos dois casos acima, preenche "Status"
+       com o texto do Histórico do extrato. A coluna "Justificativas - Não
+       reconciliadas" só recebe "MANDAR PARA CONTAS A PAGAR" quando o
+       pagamento NÃO tiver sido conciliado com nenhuma OB no Passo 2 (pra
+       pagamentos já conciliados, só o Status é preenchido).
+    4) Se não achar nenhuma linha do extrato com aquela Data+Valor, a linha
        é deixada como está (fica sinalizada no log para conferência
        manual).
 
@@ -82,6 +88,7 @@ from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
 FONT_NAME = "Arial"
 NORMAL_FONT = Font(name=FONT_NAME, size=10)
+BOLD_FONT = Font(name=FONT_NAME, size=10, bold=True)
 THIN = Side(style="thin", color="B7B7B7")
 BORDER = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 NO_BORDER = Border()
@@ -619,6 +626,7 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=15, max_combinacao_obs=6):
         "grupos": grupos,
         "obs_sem_match": obs_sem_match,
         "pagamentos_sem_ob": disponiveis,
+        "pagamentos_todos": pagamentos,
         "total_obs": len(obs),
     }
 
@@ -778,22 +786,34 @@ def _indexar_extrato(caminho_extratos):
     return indice
 
 
-def atualizar_status_sem_conciliacao_aba(ws, pagamentos_sem_ob, indice_extrato):
-    """Para cada pagamento sem OB correspondente (linha, quantia), procura a
-    mesma Data+Valor na tabela de extratos:
+HISTORICOS_IGNORADOS = {"pagamento", "pagamentos diversos"}
+
+
+def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliadas, indice_extrato):
+    """Para CADA pagamento da aba (linha, quantia) - conciliado com OB ou
+    não - procura a mesma Data+Valor na tabela de extratos:
       - se achar e o Histórico começar com 'Tarifa' -> Status = 'TARIFA'
-      - se achar e não for tarifa -> Status = Histórico do extrato,
-        Justificativas = 'MANDAR PARA CONTAS A PAGAR'
+        (independe de ter sido conciliado com OB).
+      - se achar e o Histórico for exatamente 'Pagamento' ou 'Pagamentos
+        Diversos' -> nada é alterado (ignorado).
+      - se achar e não for nenhum dos dois casos acima -> Status = texto do
+        Histórico do extrato; a Justificativa 'MANDAR PARA CONTAS A PAGAR'
+        só é preenchida se esse pagamento NÃO estiver em
+        `linhas_conciliadas` (ou seja, se ele tiver ficado sem OB).
       - se não achar nenhuma correspondência -> nada é alterado (fica para
         conferência manual).
     Devolve um relatório (listas de linhas tratadas como tarifa, mandadas
-    pra contas a pagar, sem correspondência no extrato e ambíguas)."""
+    pra contas a pagar, com status preenchido mas já conciliadas com OB,
+    ignoradas por serem histórico genérico, sem correspondência no extrato
+    e ambíguas)."""
     tratados_tarifa = []
     tratados_contas_a_pagar = []
+    tratados_conciliados_com_status = []
+    ignorados_historico_generico = []
     sem_correspondencia = []
     ambiguos = []
 
-    for linha, quantia in pagamentos_sem_ob:
+    for linha, quantia in pagamentos_todos:
         data_transacao = ws.cell(row=linha, column=4).value
         chave_data = _data_para_tupla(data_transacao)
         if chave_data is None:
@@ -813,16 +833,27 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_sem_ob, indice_extrato):
         historico_str = str(historico or "").strip()
 
         if historico_str.lower().startswith("tarifa"):
-            ws.cell(row=linha, column=COL_STATUS, value="TARIFA")
+            cel_status = ws.cell(row=linha, column=COL_STATUS, value="TARIFA")
+            cel_status.font = BOLD_FONT
             tratados_tarifa.append((linha, quantia, aba_origem, historico_str))
+            continue
+
+        if historico_str.lower() in HISTORICOS_IGNORADOS:
+            ignorados_historico_generico.append((linha, quantia, aba_origem, historico_str))
+            continue
+
+        ws.cell(row=linha, column=COL_STATUS, value=historico_str)
+        if linha in linhas_conciliadas:
+            tratados_conciliados_com_status.append((linha, quantia, aba_origem, historico_str))
         else:
-            ws.cell(row=linha, column=COL_STATUS, value=historico_str)
             ws.cell(row=linha, column=COL_JUSTIFICATIVA, value=JUSTIFICATIVA_CONTAS_A_PAGAR)
             tratados_contas_a_pagar.append((linha, quantia, aba_origem, historico_str))
 
     return {
         "tarifa": tratados_tarifa,
         "contas_a_pagar": tratados_contas_a_pagar,
+        "conciliados_com_status": tratados_conciliados_com_status,
+        "ignorados_historico_generico": ignorados_historico_generico,
         "sem_correspondencia": sem_correspondencia,
         "ambiguos": ambiguos,
     }
@@ -853,18 +884,34 @@ def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_
         n_obs_conciliadas = sum(len(grupo["ob_rows"]) for grupo in resultado_conciliacao["grupos"])
         print(f"\n[{nome}] OBs conciliadas: {n_obs_conciliadas} de {resultado_conciliacao['total_obs']} (em {len(resultado_conciliacao['grupos'])} grupo(s))")
 
+        linhas_conciliadas = {
+            linha
+            for grupo in resultado_conciliacao["grupos"]
+            for linha in grupo["pagamento_rows"]
+        }
+
         relatorio = atualizar_status_sem_conciliacao_aba(
-            ws, resultado_conciliacao["pagamentos_sem_ob"], indice_extrato
+            ws, resultado_conciliacao["pagamentos_todos"], linhas_conciliadas, indice_extrato
         )
 
-        print(f"\n[{nome}] Pagamentos sem conciliação (OB): {len(resultado_conciliacao['pagamentos_sem_ob'])}")
+        print(f"\n[{nome}] Total de pagamentos na aba: {len(resultado_conciliacao['pagamentos_todos'])} "
+              f"(sem OB: {len(resultado_conciliacao['pagamentos_sem_ob'])})")
         print(f"  -> Marcados como TARIFA: {len(relatorio['tarifa'])}")
         for linha, quantia, aba_origem, historico in relatorio["tarifa"]:
             print(f"     linha {linha} (R$ {quantia:.2f}) <- [{aba_origem}] {historico}")
 
-        print(f"  -> Marcados p/ CONTAS A PAGAR: {len(relatorio['contas_a_pagar'])}")
+        print(f"  -> Marcados p/ CONTAS A PAGAR (sem OB): {len(relatorio['contas_a_pagar'])}")
         for linha, quantia, aba_origem, historico in relatorio["contas_a_pagar"]:
             print(f"     linha {linha} (R$ {quantia:.2f}) <- [{aba_origem}] {historico}")
+
+        print(f"  -> Status preenchido (já conciliado com OB, sem mexer na Justificativa): {len(relatorio['conciliados_com_status'])}")
+        for linha, quantia, aba_origem, historico in relatorio["conciliados_com_status"]:
+            print(f"     linha {linha} (R$ {quantia:.2f}) <- [{aba_origem}] {historico}")
+
+        if relatorio["ignorados_historico_generico"]:
+            print(f"  -> Ignorados (Histórico = Pagamento/Pagamentos Diversos): {len(relatorio['ignorados_historico_generico'])}")
+            for linha, quantia, aba_origem, historico in relatorio["ignorados_historico_generico"]:
+                print(f"     linha {linha} (R$ {quantia:.2f}) <- [{aba_origem}] {historico}")
 
         if relatorio["sem_correspondencia"]:
             print(f"  ⚠️  Sem correspondência nenhuma no extrato: {len(relatorio['sem_correspondencia'])}")
