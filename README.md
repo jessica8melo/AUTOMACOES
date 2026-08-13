@@ -86,6 +86,3 @@ deactivate
 ```
 
 > `.venv/` já está no `.gitignore` — não é versionado, cada máquina cria o seu.
-
-## TO DO
-- Desenvolvimento do Script da Planilha de Controle de Transações
