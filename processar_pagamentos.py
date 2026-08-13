@@ -38,7 +38,7 @@ if __name__ == "__main__":
     parser.add_argument("caminho", nargs="?", default="conciliacao.xlsx", help="Caminho da planilha Excel")
     parser.add_argument("--aba", "--abas", dest="abas", action="append", help="Nome da aba a ser processada. Pode ser informado mais de uma vez.")
     parser.add_argument("--extratos", dest="extratos", default=None, help="Caminho da planilha de extratos (saida.xlsx). Se informado, roda também o passo 3 (marcar TARIFA / status nos pagamentos sem OB).")
-    parser.add_argument("--max-combinacao-pagamentos", dest="max_combinacao", type=int, default=6, help="Tamanho máximo de combinação de pagamentos (2 ou mais) testada nas prioridades 3 e 4, quando uma OB isolada não bate com nenhum pagamento sozinho. Padrão: 6.")
+    parser.add_argument("--max-combinacao-pagamentos", dest="max_combinacao", type=int, default=11, help="Tamanho máximo de combinação de pagamentos (2 ou mais) testada nas prioridades 3 e 4, quando uma OB isolada não bate com nenhum pagamento sozinho. O escalonamento interno começa em 6 e só sobe até este valor se sobrarem OBs sem match. Padrão: 11.")
     args = parser.parse_args()
 
     if args.extratos:

@@ -107,8 +107,9 @@ def main():
     parser.add_argument("--copia", action="store_true",
                          help="Em vez de editar a planilha original, cria e usa uma cópia "
                               "('..._TESTE.xlsx'), deixando o arquivo de verdade intocado.")
-    parser.add_argument("--max-combinacao-pagamentos", dest="max_combinacao", type=int, default=6,
-                         help="Tamanho máximo de combinação de pagamentos testada (padrão: 6).")
+    parser.add_argument("--max-combinacao-pagamentos", dest="max_combinacao", type=int, default=11,
+                         help="Tamanho máximo de combinação de pagamentos testada. O escalonamento interno "
+                              "começa em 6 e só sobe até este valor se sobrarem OBs sem match (padrão: 11).")
     args = parser.parse_args()
 
     caminho_original = Path(args.conciliacao)

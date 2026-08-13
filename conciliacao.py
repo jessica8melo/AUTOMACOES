@@ -341,8 +341,13 @@ def _buscar_combo_obs_pagamentos(obs_disponiveis, pagamentos_disponiveis, max_ta
     return None
 
 
-def conciliar_pagamentos_obs_aba(ws, max_combinacao=15, max_combinacao_obs=6):
-    """Concilia pagamentos com OBs dentro de UMA aba. Devolve um dict com o
+def _conciliar_pagamentos_obs_aba_com_teto(ws, max_combinacao, max_combinacao_obs):
+    """Roda a conciliação inteira (Prioridades 1-4) em UMA aba usando
+    `max_combinacao` como teto FIXO de tamanho de combinação de pagamentos
+    (tanto pra Prioridade 3/4 quanto pro lado dos pagamentos dentro da
+    Prioridade 2). Quem decide se vale a pena repetir isso com um teto maior
+    é `conciliar_pagamentos_obs_aba` (a versão escalonada, logo abaixo) - esta
+    função aqui não sabe nada sobre escalonamento. Devolve um dict com o
     relatório, ou None se a aba não tiver a estrutura esperada (bloco de
     Pagamentos e/ou tabela OB/VALOR)."""
     linha_titulo_pag = localizar_titulo(ws, "PAGAMENTOS")
@@ -485,7 +490,53 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=15, max_combinacao_obs=6):
     }
 
 
-def conciliar_pagamentos_obs(caminho, max_combinacao=6, max_combinacao_obs=6, abas=None):
+def conciliar_pagamentos_obs_aba(ws, max_combinacao=11, max_combinacao_obs=6, max_combinacao_inicial=6):
+    """Concilia pagamentos com OBs dentro de UMA aba, de forma ESCALONADA:
+    tenta primeiro com um teto de `max_combinacao_inicial` pagamentos por
+    combinação (mais barato e mais conservador - evita "inventar" uma
+    combinação de 9-10 pagamentos quando nem seria necessário); só sobe o
+    teto (de 1 em 1) até no máximo `max_combinacao` se, depois de rodar,
+    ainda sobrar pelo menos uma OB sem match E ainda houver pagamentos
+    suficientes sem OB pra, em tese, formar uma combinação maior do que a já
+    testada (ou seja: mais pagamentos sem OB do que o teto atual - se
+    sobrarem 5 pagamentos e o teto já é 6, não adianta subir pra 7, porque
+    não existe pagamento a mais pra entrar numa combinação maior).
+
+    Cada tentativa reconcilia a aba inteira do zero (a pintura da tentativa
+    anterior é sobrescrita) - o cálculo em si só olha os VALORES das células,
+    então repetir isso não deixa resíduo nem depende de rodadas anteriores.
+
+    Se `max_combinacao_inicial >= max_combinacao`, roda só uma vez com esse
+    teto (sem escalonamento) - mesmo comportamento de antes.
+
+    Devolve um dict com o relatório (o da última tentativa rodada), com uma
+    chave extra "max_combinacao_usado" indicando qual teto foi o vencedor.
+    Ou None se a aba não tiver a estrutura esperada (bloco de Pagamentos
+    e/ou tabela OB/VALOR)."""
+    teto_inicial = min(max_combinacao_inicial, max_combinacao)
+    resultado = None
+    for teto in range(teto_inicial, max_combinacao + 1):
+        resultado = _conciliar_pagamentos_obs_aba_com_teto(ws, max_combinacao=teto, max_combinacao_obs=max_combinacao_obs)
+        if resultado is None:
+            return None
+
+        resultado["max_combinacao_usado"] = teto
+
+        if not resultado["obs_sem_match"]:
+            # tudo conciliado - não precisa arriscar combinações maiores
+            break
+        if len(resultado["pagamentos_sem_ob"]) <= teto:
+            # não sobra pagamento suficiente pra formar uma combinação maior
+            # que a que já foi tentada - subir o teto não mudaria nada
+            break
+        if teto < max_combinacao:
+            print(f"  ⬆️  [{ws.title}] {len(resultado['obs_sem_match'])} OB(s) ainda sem match com teto de {teto} pagamento(s) "
+                  f"(sobram {len(resultado['pagamentos_sem_ob'])} pagamento(s) sem OB) - tentando com teto {teto + 1}...")
+
+    return resultado
+
+
+def conciliar_pagamentos_obs(caminho, max_combinacao=11, max_combinacao_obs=6, max_combinacao_inicial=6, abas=None):
     wb = openpyxl.load_workbook(caminho)
     abas_selecionadas = _normalizar_abas(abas)
     abas_alvo = abas_selecionadas or wb.sheetnames
