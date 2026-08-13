@@ -341,6 +341,42 @@ def _buscar_combo_obs_pagamentos(obs_disponiveis, pagamentos_disponiveis, max_ta
     return None
 
 
+def _contar_pagamentos_pendentes(ws):
+    """Conta quantos pagamentos sobram sem OB depois SÓ da Prioridade 1
+    (match exato de um único pagamento) - ou seja, o tamanho do "pool" de
+    pagamentos que as Prioridades 2-4 (combinações) vão ter que vasculhar
+    numa aba. Esse número não depende de nenhum teto (a Prioridade 1 não
+    usa `max_combinacao`), então dá pra calcular baratinho, sem rodar a
+    busca de combinações nenhuma vez - é usado por
+    `conciliar_pagamentos_obs_aba` pra decidir o teto INICIAL da
+    escalonada (ver docstring lá).
+
+    Devolve a contagem, ou None se a aba não tiver a estrutura esperada
+    (mesmo critério de `_conciliar_pagamentos_obs_aba_com_teto`: precisa
+    ter bloco de Pagamentos e tabela OB/VALOR)."""
+    linha_titulo_pag = localizar_titulo(ws, "PAGAMENTOS")
+    if linha_titulo_pag is None:
+        return None
+
+    col_ob, col_valor, linha_header_ob = localizar_bloco_ob(ws)
+    if col_ob is None:
+        return None
+
+    pagamentos = _linhas_pagamentos(ws, linha_titulo_pag)
+    obs = _linhas_ob_com_linha(ws, col_ob, col_valor, linha_header_ob + 1)
+
+    disponiveis = list(pagamentos)
+    for _, _, valor in obs:
+        alvo = _centavos(valor)
+        pagamento_exato = next(
+            (p for p in disponiveis if _centavos(p[1]) == alvo), None
+        )
+        if pagamento_exato is not None:
+            disponiveis.remove(pagamento_exato)
+
+    return len(disponiveis)
+
+
 def _conciliar_pagamentos_obs_aba_com_teto(ws, max_combinacao, max_combinacao_obs):
     """Roda a conciliação inteira (Prioridades 1-4) em UMA aba usando
     `max_combinacao` como teto FIXO de tamanho de combinação de pagamentos
@@ -490,32 +526,64 @@ def _conciliar_pagamentos_obs_aba_com_teto(ws, max_combinacao, max_combinacao_ob
     }
 
 
-def conciliar_pagamentos_obs_aba(ws, max_combinacao=11, max_combinacao_obs=6, max_combinacao_inicial=6):
+def conciliar_pagamentos_obs_aba(ws, max_combinacao=None, max_combinacao_obs=6, max_combinacao_minimo=6):
     """Concilia pagamentos com OBs dentro de UMA aba, de forma ESCALONADA:
-    tenta primeiro com um teto de `max_combinacao_inicial` pagamentos por
-    combinação (mais barato e mais conservador - evita "inventar" uma
-    combinação de 9-10 pagamentos quando nem seria necessário); só sobe o
-    teto (de 1 em 1) até no máximo `max_combinacao` se, depois de rodar,
-    ainda sobrar pelo menos uma OB sem match E ainda houver pagamentos
-    suficientes sem OB pra, em tese, formar uma combinação maior do que a já
-    testada (ou seja: mais pagamentos sem OB do que o teto atual - se
-    sobrarem 5 pagamentos e o teto já é 6, não adianta subir pra 7, porque
-    não existe pagamento a mais pra entrar numa combinação maior).
+    tenta primeiro com um teto MÁXIMO de tamanho de combinação de
+    pagamentos - a tentativa mais permissiva, que já cobre de cara
+    qualquer combinação que uma tentativa menor também acharia. Só se essa
+    tentativa deixar pelo menos uma OB sem match é que o teto vai sendo
+    DIMINUÍDO (de 1 em 1) até no mínimo `max_combinacao_minimo`: um teto
+    menor é mais conservador e pode resolver casos que o teto máximo não
+    resolveu - com valores repetidos (ex.: vários pagamentos de R$300,00
+    iguais), uma OB processada com teto alto pode "roubar" gananciosamente
+    uma combinação grande de pagamentos que na verdade pertenceria a outra
+    OB (ver comentário na Prioridade 2, acima); um teto menor evita essa
+    combinação grande e pode deixar sobrar exatamente os pagamentos que a
+    outra OB precisava.
+
+    O teto MÁXIMO inicial não é mais um número fixo: é calculado por aba,
+    como a quantidade de pagamentos que sobram sem OB depois da Prioridade
+    1 (match exato) - ver `_contar_pagamentos_pendentes`. Ou seja, o teto
+    já começa grande o bastante pra cobrir QUALQUER combinação possível
+    com os pagamentos daquela aba (testar um teto maior que isso não faria
+    diferença nenhuma), e desce a partir daí. Ex.: se sobraram 32
+    pagamentos sem match direto numa aba, a escalonada tenta teto 32, 31,
+    30, ... até `max_combinacao_minimo` (parando antes se algum teto já
+    conciliar tudo).
+
+    `max_combinacao`, se informado, funciona como um teto ABSOLUTO por
+    cima desse valor calculado - útil como trava de segurança em abas com
+    MUITOS pagamentos sem match, pra não deixar a busca cara demais (cada
+    tentativa reconcilia a aba inteira do zero). Se omitido (None, padrão),
+    não há teto artificial: o teto inicial é sempre o número de pagamentos
+    pendentes daquela aba.
+
+    Assim que uma tentativa conseguir conciliar TODAS as OBs, para ali -
+    não continua diminuindo o teto atrás de um valor ainda menor que também
+    resolvesse tudo, mesmo que o resultado tenha usado uma combinação
+    grande.
 
     Cada tentativa reconcilia a aba inteira do zero (a pintura da tentativa
     anterior é sobrescrita) - o cálculo em si só olha os VALORES das células,
     então repetir isso não deixa resíduo nem depende de rodadas anteriores.
 
-    Se `max_combinacao_inicial >= max_combinacao`, roda só uma vez com esse
-    teto (sem escalonamento) - mesmo comportamento de antes.
+    Se `max_combinacao_minimo >= teto inicial`, roda só uma vez com esse
+    teto (sem escalonamento).
 
     Devolve um dict com o relatório (o da última tentativa rodada), com uma
     chave extra "max_combinacao_usado" indicando qual teto foi o vencedor.
     Ou None se a aba não tiver a estrutura esperada (bloco de Pagamentos
     e/ou tabela OB/VALOR)."""
-    teto_inicial = min(max_combinacao_inicial, max_combinacao)
+    n_pendentes = _contar_pagamentos_pendentes(ws)
+    if n_pendentes is None:
+        return None
+
+    teto_inicial = n_pendentes if max_combinacao is None else min(max_combinacao, n_pendentes)
+    teto_inicial = max(teto_inicial, 1)  # nunca roda com teto menor que 1
+    teto_minimo = min(max_combinacao_minimo, teto_inicial)
+
     resultado = None
-    for teto in range(teto_inicial, max_combinacao + 1):
+    for teto in range(teto_inicial, teto_minimo - 1, -1):
         resultado = _conciliar_pagamentos_obs_aba_com_teto(ws, max_combinacao=teto, max_combinacao_obs=max_combinacao_obs)
         if resultado is None:
             return None
@@ -523,20 +591,17 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=11, max_combinacao_obs=6, ma
         resultado["max_combinacao_usado"] = teto
 
         if not resultado["obs_sem_match"]:
-            # tudo conciliado - não precisa arriscar combinações maiores
+            # tudo conciliado - fica com esse resultado, mesmo que tenha
+            # usado uma combinação grande
             break
-        if len(resultado["pagamentos_sem_ob"]) <= teto:
-            # não sobra pagamento suficiente pra formar uma combinação maior
-            # que a que já foi tentada - subir o teto não mudaria nada
-            break
-        if teto < max_combinacao:
-            print(f"  ⬆️  [{ws.title}] {len(resultado['obs_sem_match'])} OB(s) ainda sem match com teto de {teto} pagamento(s) "
-                  f"(sobram {len(resultado['pagamentos_sem_ob'])} pagamento(s) sem OB) - tentando com teto {teto + 1}...")
+        if teto > teto_minimo:
+            print(f"  ⬇️  [{ws.title}] {len(resultado['obs_sem_match'])} OB(s) ainda sem match com teto de {teto} pagamento(s) "
+                  f"- tentando com teto {teto - 1} (mais conservador)...")
 
     return resultado
 
 
-def conciliar_pagamentos_obs(caminho, max_combinacao=11, max_combinacao_obs=6, max_combinacao_inicial=6, abas=None):
+def conciliar_pagamentos_obs(caminho, max_combinacao=None, max_combinacao_obs=6, max_combinacao_minimo=6, abas=None):
     wb = openpyxl.load_workbook(caminho)
     abas_selecionadas = _normalizar_abas(abas)
     abas_alvo = abas_selecionadas or wb.sheetnames
@@ -549,7 +614,8 @@ def conciliar_pagamentos_obs(caminho, max_combinacao=11, max_combinacao_obs=6, m
 
         ws = wb[nome]
         resultado = conciliar_pagamentos_obs_aba(
-            ws, max_combinacao=max_combinacao, max_combinacao_obs=max_combinacao_obs
+            ws, max_combinacao=max_combinacao, max_combinacao_obs=max_combinacao_obs,
+            max_combinacao_minimo=max_combinacao_minimo,
         )
         if resultado is not None:
             resultados.append(resultado)

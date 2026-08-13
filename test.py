@@ -36,6 +36,7 @@ Uso:
     python test.py --copia
 
     python test.py --sem-pausa --aba "01.07.26" --aba "02.07.26" --aba "03.07.26" --aba "04.07.26" --aba "05.07.26" --aba "06.07.26" --aba "07.07.26" --aba "08.07.26" --aba "09.07.26" --aba "10.07.26" --aba "11.07.26" --aba "12.07.26" --aba "13.07.26" --aba "14.07.26" --aba "15.07.26" --aba "16.07.26" --aba "17.07.26" --aba "18.07.26" --aba "19.07.26" --aba "20.07.26" --aba "21.07.26" --aba "22.07.26" --aba "23.07.26" --aba "24.07.26" --aba "25.07.26" --aba "26.07.26" --aba "27.07.26" --aba "28.07.26" --aba "29.07.26" --aba "30.07.26" --aba "31.07.26"
+    python test.py --sem-pausa --aba "01.07.26" --aba "02.07.26" --aba "03.07.26" --aba "04.07.26" --aba "05.07.26" --aba "06.07.26" --aba "08.07.26" --aba "09.07.26" --aba "11.07.26" --aba "12.07.26" --aba "13.07.26" --aba "14.07.26" --aba "15.07.26" --aba "16.07.26" --aba "17.07.26" --aba "18.07.26" --aba "19.07.26" --aba "20.07.26" --aba "21.07.26" --aba "22.07.26" --aba "23.07.26" --aba "24.07.26" --aba "25.07.26" --aba "26.07.26" --aba "27.07.26" --aba "28.07.26" --aba "29.07.26" --aba "30.07.26" --aba "31.07.26"
 """
 
 import argparse
@@ -109,9 +110,8 @@ def main():
     parser.add_argument("--copia", action="store_true",
                          help="Em vez de editar a planilha original, cria e usa uma cópia "
                               "('..._TESTE.xlsx'), deixando o arquivo de verdade intocado.")
-    parser.add_argument("--max-combinacao-pagamentos", dest="max_combinacao", type=int, default=11,
-                         help="Tamanho máximo de combinação de pagamentos testada. O escalonamento interno "
-                              "começa em 6 e só sobe até este valor se sobrarem OBs sem match (padrão: 11).")
+    parser.add_argument("--max-combinacao-pagamentos", dest="max_combinacao", type=int, default=None, help="Trava de segurança (opcional) pro tamanho máximo de combinação de pagamentos (2 ou mais) testada nas prioridades 3 e 4, quando uma OB isolada não bate com nenhum pagamento sozinho. Por padrão (não informado) não há trava: o escalonamento interno começa já no número de pagamentos pendentes daquela aba e só desce (até 6) se sobrarem OBs sem match. Informe um valor aqui só se quiser limitar isso por baixo, em abas com muitos pagamentos sem match, pra não deixar a busca cara demais.")
+
     args = parser.parse_args()
 
     caminho_original = Path(args.conciliacao)
