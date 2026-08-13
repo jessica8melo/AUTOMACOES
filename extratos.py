@@ -7,8 +7,9 @@ combinação Data Transação + Quantia (comparado com Data + Valor (R$) do
 extrato). Para cada pagamento:
 
     1) Se achar uma linha do extrato com a mesma Data+Valor e o Histórico
-       dela começar com "Tarifa", preenche a coluna "Status" com "TARIFA"
-       (independentemente do pagamento ter sido conciliado com uma OB).
+       dela começar com "Tarifa" ou "Tar agrupad" (ex.: "Tar agrupadas"),
+       preenche a coluna "Status" com "TARIFA" (independentemente do
+       pagamento ter sido conciliado com uma OB). Ver `_eh_historico_tarifa`.
     2) Se achar e o Histórico for exatamente "Pagamento" ou "Pagamentos
        Diversos" (sem contar maiúsculas/minúsculas e espaços), a linha é
        ignorada - nada é preenchido.
@@ -43,6 +44,22 @@ COL_STATUS = 6
 COL_JUSTIFICATIVA = 7
 
 HISTORICOS_IGNORADOS = {"pagamento", "pagamentos diversos"}
+
+# Padrões de Histórico do extrato que devem ser tratados como tarifa
+# bancária (Status = "TARIFA"). Não são checados só no INÍCIO do texto,
+# porque alguns bancos embutem o trecho no meio de uma descrição maior,
+# ex.: "Débito Serviço Cobrança Tar. agrupadas - ocorrencia 30/07/2026".
+# Cobre tanto "Tarifa..." quanto "Tar agrupadas"/"Tar. agrupadas" (com ou
+# sem o ponto depois de "Tar").
+_RE_TARIFA = re.compile(r"\btarifa\b", re.IGNORECASE)
+_RE_TAR_AGRUPADAS = re.compile(r"\btar\.?\s*agrupad", re.IGNORECASE)
+
+
+def _eh_historico_tarifa(historico_str):
+    """True se o histórico do extrato deve ser tratado como tarifa
+    bancária (Status = 'TARIFA'), buscando os padrões em qualquer parte do
+    texto (não só no início)."""
+    return bool(_RE_TARIFA.search(historico_str) or _RE_TAR_AGRUPADAS.search(historico_str))
 
 # Abas da planilha de conciliação seguem o padrão "dd.mm.aa" (ex.: "07.08.25"),
 # que é a data do dia a que aquela aba se refere.
@@ -147,8 +164,9 @@ def _indexar_extrato(caminho_extratos):
 def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliadas, indice_extrato):
     """Para CADA pagamento da aba (linha, quantia) - conciliado com OB ou
     não - procura a mesma Data+Valor na tabela de extratos:
-      - se achar e o Histórico começar com 'Tarifa' -> Status = 'TARIFA'
-        (independe de ter sido conciliado com OB).
+      - se achar e o Histórico começar com 'Tarifa' ou 'Tar agrupad'
+        (ver `_eh_historico_tarifa`) -> Status = 'TARIFA' (independe de ter
+        sido conciliado com OB).
       - se achar e o Histórico for exatamente 'Pagamento' ou 'Pagamentos
         Diversos' -> nada é alterado (ignorado).
       - se achar e não for nenhum dos dois casos acima -> Status = texto do
@@ -187,7 +205,7 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliada
         aba_origem, historico = candidatos[0]
         historico_str = str(historico or "").strip()
 
-        if historico_str.lower().startswith("tarifa"):
+        if _eh_historico_tarifa(historico_str):
             cel_status = ws.cell(row=linha, column=COL_STATUS, value="TARIFA")
             cel_status.font = BOLD_FONT
             tratados_tarifa.append((linha, quantia, aba_origem, historico_str))
