@@ -1,6 +1,6 @@
 """
 Script pra TESTAR o pipeline de conciliação (Passos 2 a 4) na planilha
-"conciliaca-julho-2026.xlsx", cruzando com os extratos de "saida.xlsx",
+"conciliacao-julho-2026.xlsx", cruzando com os extratos de "saida.xlsx",
 rodando UMA ABA POR VEZ - em vez de processar a planilha inteira de uma
 tacada só, como fazem os scripts originais.
 
@@ -98,7 +98,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Testa o pipeline de conciliação (Passos 2 a 4) aba por aba."
     )
-    parser.add_argument("--conciliacao", default="conciliaca-julho-2026.xlsx",
+    parser.add_argument("--conciliacao", default="conciliacao-julho-2026.xlsx",
                          help="Planilha de conciliação (padrão: conciliaca-julho-2026.xlsx)")
     parser.add_argument("--extratos", default="saida.xlsx",
                          help="Planilha de extratos (padrão: saida.xlsx)")
