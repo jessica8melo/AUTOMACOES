@@ -45,6 +45,11 @@ from openpyxl.styles import PatternFill
 from estilos import CORES_CONCILIACAO, NORMAL_FONT, NUM_COLS_PRINCIPAL
 from helpers_planilha import localizar_titulo, localizar_bloco_ob, _centavos, _normalizar_abas
 
+# trava de segurança: para um dado tamanho de combinação, se o número de
+# combinações possíveis (n escolhe k) passar disso, esse tamanho é pulado em
+# vez de arriscar travar o script numa aba com muitos itens sem match
+LIMITE_COMBINACOES = 200_000
+
 
 def _linhas_pagamentos(ws, linha_titulo_pag):
     """Lê a tabela principal de Pagamentos (colunas A:G) dessa aba,
@@ -181,6 +186,12 @@ def _buscar_subconjunto(pagamentos_disponiveis, alvo_centavos, max_tamanho):
     melhor_score = None
 
     for tamanho in range(2, max_tamanho + 1):
+        if math.comb(n, tamanho) > LIMITE_COMBINACOES:
+            # combinatória grande demais pra esse tamanho - pula pro
+            # próximo em vez de arriscar travar (mesma trava usada em
+            # `_enumerar_somas`/`_buscar_combo_obs_pagamentos`, movida pra
+            # cima no arquivo porque agora também é usada aqui)
+            continue
         combo = _buscar_tamanho_fixo(itens, valores, alvo_centavos, tamanho)
         if combo is None:
             continue
@@ -231,12 +242,6 @@ def _buscar_tamanho_fixo(itens, valores, alvo, tamanho):
 
     rec(0, 0, 0)
     return melhor_combo
-
-
-# trava de segurança: para um dado tamanho de combinação, se o número de
-# combinações possíveis (n escolhe k) passar disso, esse tamanho é pulado em
-# vez de arriscar travar o script numa aba com muitos itens sem match
-LIMITE_COMBINACOES = 200_000
 
 
 def _enumerar_somas(itens, valor_fn, max_tamanho, teto_centavos=None, limite=LIMITE_COMBINACOES):
@@ -545,11 +550,24 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=None, max_combinacao_obs=6, 
     como a quantidade de pagamentos que sobram sem OB depois da Prioridade
     1 (match exato) - ver `_contar_pagamentos_pendentes`. Ou seja, o teto
     já começa grande o bastante pra cobrir QUALQUER combinação possível
-    com os pagamentos daquela aba (testar um teto maior que isso não faria
-    diferença nenhuma), e desce a partir daí. Ex.: se sobraram 32
-    pagamentos sem match direto numa aba, a escalonada tenta teto 32, 31,
-    30, ... até `max_combinacao_minimo` (parando antes se algum teto já
-    conciliar tudo).
+    com os pagamentos daquela aba, e desce a partir daí até
+    `max_combinacao_minimo`. Ex.: se sobraram 32 pagamentos sem match
+    direto numa aba, a escalonada tenta teto 32, 31, 30, ... até
+    `max_combinacao_minimo` (parando antes se algum teto já conciliar
+    tudo).
+
+    NOTA sobre performance: em abas com muitos pagamentos pendentes
+    (dezenas), a trava `LIMITE_COMBINACOES` já poda a maior parte das
+    tentativas de tamanho grande - pode parecer que "não adianta" começar
+    tão alto, já que muitos tetos intermediários testam exatamente os
+    mesmos tamanhos de combinação (todos pulados). MAS o pool de
+    pagamentos disponíveis vai ENCOLHENDO conforme OBs anteriores são
+    conciliadas dentro da mesma tentativa - um tamanho de combinação
+    inviável (por `LIMITE_COMBINACOES`) contra o pool cheio pode virar
+    viável mais adiante, contra o pool já reduzido, pra uma OB processada
+    depois. Por isso o teto inicial não é limitado a um "teto prático"
+    calculado sobre o total de pendentes - isso já foi tentado e perdeu
+    match real numa aba de teste.
 
     `max_combinacao`, se informado, funciona como um teto ABSOLUTO por
     cima desse valor calculado - útil como trava de segurança em abas com
