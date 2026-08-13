@@ -40,4 +40,23 @@ CORES_CONCILIACAO = [
     "BF9000",  # dourado/mostarda
     "D5A6BD",  # rosa antigo
     "999999",  # cinza (reserva pra quando esgotar as outras)
+    "6D9EEB",  # azul claro
+    "8FCE00",  # verde limão
+    "E69138",  # laranja queimado
+    "A64D79",  # vinho/magenta escuro
+    "16537E",  # azul petróleo escuro
+    "B45F06",  # marrom alaranjado
+    "783F04",  # marrom escuro
+    "76D7C4",  # verde-água claro
+    "F9CB9C",  # pêssego claro
+    "D9D2E9",  # lilás muito claro
+    "D0E0E3",  # azul gelo
+    "EAD1DC",  # rosa bebê
+    "FCE5CD",  # creme alaranjado
+    "C9DAF8",  # azul bebê
+    "D9EAD3",  # verde bem claro
+    "FFF2CC",  # amarelo bem claro
+    "B6D7A8",  # verde pastel
+    "A4C2F4",  # azul pastel
+    "F4CCCC",  # vermelho bem claro
 ]
