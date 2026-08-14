@@ -15,19 +15,25 @@ extrato). Para cada pagamento:
        ISS), preenche a coluna "Status" com "IMPOSTO" (mesma regra da
        TARIFA acima, independentemente do pagamento ter sido conciliado com
        uma OB). Ver `_eh_historico_imposto`.
-    3) Se achar e o Histórico for uma transferência interna entre contas do
+    3) Se achar e o Histórico for uma movimentação com o fundo "BB
+       Fdos.Extramercado" (aplicação/resgate automático - ver
+       `_eh_historico_extramercado`), preenche "Status" no formato
+       "Conta_da_aba / extra" (também independentemente de conciliação com
+       OB, igual TARIFA/IMPOSTO). No lado de Recebimentos (ver mais abaixo),
+       o formato é invertido: "extra / Conta_destino".
+    4) Se achar e o Histórico for uma transferência interna entre contas do
        grupo BBTS (ver `_eh_transferencia_entre_contas_bbts`), preenche
        "Status" no formato "Conta_origem / Conta_destino" (também
        independentemente de conciliação com OB, igual TARIFA/IMPOSTO).
-    4) Se achar e o Histórico for exatamente "Pagamento" ou "Pagamentos
+    6) Se achar e o Histórico for exatamente "Pagamento" ou "Pagamentos
        Diversos" (sem contar maiúsculas/minúsculas e espaços), a linha é
        ignorada - nada é preenchido.
-    5) Se achar e não for nenhum dos casos acima, preenche "Status" com o
+    7) Se achar e não for nenhum dos casos acima, preenche "Status" com o
        texto do Histórico do extrato. A coluna "Justificativas - Não
        reconciliadas" só recebe uma justificativa quando o pagamento NÃO
        tiver sido conciliado com nenhuma OB no Passo 2 (pra pagamentos já
        conciliados, só o Status é preenchido).
-    6) Se não achar nenhuma linha do extrato com aquela Data+Valor, a linha
+    8) Se não achar nenhuma linha do extrato com aquela Data+Valor, a linha
        é deixada como está (fica sinalizada no log para conferência
        manual).
 
@@ -37,12 +43,15 @@ primeira encontrada é usada, mas o caso é destacado no log para revisão.
 Além disso, para a tabela de RECEBIMENTOS da mesma aba (quando existir),
 cada linha também é cruzada por Data+Valor com a tabela de PAGAMENTOS do
 extrato. Quando o Histórico encontrado for uma transferência interna entre
-contas do grupo BBTS (mesmo critério do item 2 acima - ver
-`_eh_transferencia_entre_contas_bbts`), a coluna "Status" é preenchida no
-formato "Conta_origem / Conta_destino", usando o nome da aba do extrato de
-onde saiu o dinheiro (conta origem) e o número extraído do campo Documento
-dessa linha (conta destino) - ver `atualizar_status_recebimentos_aba`.
-Outras correspondências no lado de Recebimentos (ex.: Pix) são ignoradas.
+contas do grupo BBTS (mesmo critério do item 4 acima - ver
+`_eh_transferencia_entre_contas_bbts`) ou uma movimentação com o fundo "BB
+Fdos.Extramercado" (mesmo critério do item 3 acima - ver
+`_eh_historico_extramercado`), a coluna "Status" é preenchida no formato
+"Conta_origem / Conta_destino", usando o nome da aba do extrato de onde
+saiu o dinheiro (conta origem) - ou o literal "extra" no caso da
+Extramercado - e o número extraído do campo Documento dessa linha (conta
+destino) - ver `atualizar_status_recebimentos_aba`. Outras correspondências
+no lado de Recebimentos (ex.: Pix) são ignoradas.
 
 Uma transferência é considerada interna (entre contas do grupo BBTS) quando
 o Histórico começa com "Transferência enviada" E (contém "BB TEC" OU o
@@ -128,6 +137,21 @@ _RE_DIGITOS = re.compile(r"\d+")
 
 # Nome de aba do saida.xlsx = número da conta, ex.: "205826-X".
 _RE_NOME_CONTA = re.compile(r"^(\d{6})-(\w+)$")
+
+# Movimentação automática entre a conta corrente e o fundo de investimento
+# "BB Fdos.Extramercado" (aplicação/resgate automáticos). Não tem um verbo
+# fixo no início do Histórico (pode ser "Aplicação...", "Resgate...",
+# "Transferência..." etc.), então o padrão é buscado em qualquer parte do
+# texto. Aceita variações de espaçamento/pontuação, ex.: "BB Fdos
+# Extramercado", "BB Fdos. Extramercado".
+_RE_EXTRAMERCADO = re.compile(r"\bbb\s+fdos\.?\s*extra\s*mercado\b", re.IGNORECASE)
+
+
+def _eh_historico_extramercado(historico_str):
+    """True se o histórico do extrato mencionar o fundo 'BB
+    Fdos.Extramercado' (aplicação/resgate automático), buscando o padrão em
+    qualquer parte do texto, independentemente do verbo usado no início."""
+    return bool(_RE_EXTRAMERCADO.search(historico_str))
 
 
 def _eh_transferencia_entre_contas_bbts(historico_str, documento, mapa_contas):
@@ -256,13 +280,45 @@ def _ler_pagamentos_extrato_aba(ws):
     return linhas
 
 
+def _ler_recebimentos_extrato_aba(ws):
+    """Lê a tabela de RECEBIMENTOS de uma aba de saida.xlsx (mesmo layout de
+    colunas da tabela de Pagamentos - Data/Histórico/Documento/Valor).
+    Usada apenas para achar movimentações de Resgate da Extramercado (ver
+    `_eh_historico_extramercado`), que aparecem do lado de RECEBIMENTOS do
+    extrato (é dinheiro entrando na conta), diferente de uma Aplicação, que
+    aparece do lado de PAGAMENTOS (dinheiro saindo). Devolve [(data,
+    histórico, documento, valor)]."""
+    linha_titulo = localizar_titulo(ws, "RECEBIMENTOS")
+    if linha_titulo is None:
+        return []
+
+    linhas = []
+    r = linha_titulo + 2  # +1 cabeçalho de colunas, +2 primeira linha de dado
+    while True:
+        data = ws.cell(row=r, column=1).value
+        if data is None:
+            break
+        historico = ws.cell(row=r, column=2).value
+        documento = ws.cell(row=r, column=3).value
+        valor = ws.cell(row=r, column=4).value
+        if isinstance(valor, (int, float)):
+            linhas.append((data, historico, documento, valor))
+        r += 1
+    return linhas
+
+
 def _indexar_extrato(caminho_extratos):
-    """Monta um índice (ano, mes, dia, valor_em_centavos) -> [(aba,
-    histórico, documento), ...] a partir de todas as abas de PAGAMENTOS em
-    saida.xlsx, e também o mapa de contas conhecidas (ver `_mapear_contas`).
-    Devolve (indice, mapa_contas)."""
+    """Monta dois índices (ano, mes, dia, valor_em_centavos) -> [(aba,
+    histórico, documento), ...] a partir de todas as abas de saida.xlsx - um
+    para a tabela de PAGAMENTOS de cada aba (`indice`, usado pra tarifa,
+    imposto, transferências BBTS e Aplicações na Extramercado) e outro para
+    a tabela de RECEBIMENTOS de cada aba (`indice_recebimentos`, usado só
+    pra achar Resgates da Extramercado, que aparecem do lado de
+    RECEBIMENTOS do extrato) - e também o mapa de contas conhecidas (ver
+    `_mapear_contas`). Devolve (indice, indice_recebimentos, mapa_contas)."""
     wb = openpyxl.load_workbook(caminho_extratos, data_only=True)
     indice = {}
+    indice_recebimentos = {}
     for nome in wb.sheetnames:
         ws = wb[nome]
         for data, historico, documento, valor in _ler_pagamentos_extrato_aba(ws):
@@ -271,7 +327,13 @@ def _indexar_extrato(caminho_extratos):
                 continue
             chave = (*chave_data, _centavos(valor))
             indice.setdefault(chave, []).append((nome, historico, documento))
-    return indice, _mapear_contas(wb.sheetnames)
+        for data, historico, documento, valor in _ler_recebimentos_extrato_aba(ws):
+            chave_data = _data_para_tupla(data)
+            if chave_data is None:
+                continue
+            chave = (*chave_data, _centavos(valor))
+            indice_recebimentos.setdefault(chave, []).append((nome, historico, documento))
+    return indice, indice_recebimentos, _mapear_contas(wb.sheetnames)
 
 
 def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliadas, indice_extrato, mapa_contas):
@@ -284,6 +346,10 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliada
         ou uma sigla de tributo como IOF, IRRF, DARF, ISS - ver
         `_eh_historico_imposto`) -> Status = 'IMPOSTO' (independe de ter
         sido conciliado com OB, igual TARIFA).
+      - se achar e o Histórico for uma movimentação com o fundo 'BB
+        Fdos.Extramercado' (ver `_eh_historico_extramercado`) -> Status =
+        'Conta_da_aba / extra' (independe de ter sido conciliado com OB,
+        igual TARIFA/IMPOSTO).
       - se achar e o Histórico for uma transferência interna entre contas
         do grupo BBTS (ver `_eh_transferencia_entre_contas_bbts`) -> Status
         = 'Conta_origem / Conta_destino' (independe de ter sido conciliado
@@ -340,6 +406,13 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliada
             tratados_imposto.append((linha, quantia, aba_origem, historico_str))
             continue
 
+        if _eh_historico_extramercado(historico_str):
+            status = f"{aba_origem} / extra"
+            cel_status = ws.cell(row=linha, column=COL_STATUS, value=status)
+            cel_status.font = BOLD_FONT
+            tratados_transferencia.append((linha, quantia, aba_origem, "extra"))
+            continue
+
         if _eh_transferencia_entre_contas_bbts(historico_str, documento, mapa_contas):
             conta_destino = _conta_destino_do_documento(documento, mapa_contas)
             if conta_destino is not None:
@@ -391,29 +464,40 @@ def _ler_recebimentos_aba(ws):
     return linhas
 
 
-def atualizar_status_recebimentos_aba(ws, indice_extrato, mapa_contas):
+def atualizar_status_recebimentos_aba(ws, indice_extrato, indice_extrato_recebimentos, mapa_contas):
     """Para cada linha da tabela de RECEBIMENTOS da aba, procura a mesma
-    Data+Valor na tabela de PAGAMENTOS do extrato (mesmo índice usado para
-    os Pagamentos - Passo 3 de `atualizar_status_sem_conciliacao_aba`).
-
-    Só age quando a correspondência encontrada for uma transferência
-    interna entre contas do grupo BBTS (ver
-    `_eh_transferencia_entre_contas_bbts` - Histórico começando com
-    'Transferência enviada' e contendo 'BB TEC' OU cujo Documento aponte
-    pra uma conta conhecida); outras correspondências (Pix, etc.) são
-    deixadas como estão. Quando aplicável, preenche a coluna 'Status' com
-    'Conta_origem / Conta_destino':
+    Data+Valor:
+      - na tabela de PAGAMENTOS do extrato (`indice_extrato`, mesmo índice
+        usado para os Pagamentos - Passo 3 de
+        `atualizar_status_sem_conciliacao_aba`), pra achar transferências
+        internas entre contas do grupo BBTS (ver
+        `_eh_transferencia_entre_contas_bbts` - Histórico começando com
+        'Transferência enviada' e contendo 'BB TEC' OU cujo Documento
+        aponte pra uma conta conhecida);
+      - na tabela de RECEBIMENTOS do extrato (`indice_extrato_recebimentos`),
+        pra achar Resgates da Extramercado (ver
+        `_eh_historico_extramercado`) - é dinheiro entrando na conta, por
+        isso fica do lado de RECEBIMENTOS do extrato, diferente de uma
+        Aplicação (que fica do lado de PAGAMENTOS e é tratada em
+        `atualizar_status_sem_conciliacao_aba`).
+    Outras correspondências (Pix, etc.) são deixadas como estão. Quando
+    aplicável, preenche a coluna 'Status' com 'Conta_origem / Conta_destino':
       - Conta_origem = nome da aba do extrato de onde saiu a transferência
-        (a própria aba já é nomeada com o número da conta, ex.: '200000-8');
+        (a própria aba já é nomeada com o número da conta, ex.: '200000-8'),
+        ou o literal 'extra' quando o Histórico for uma movimentação com a
+        Extramercado;
       - Conta_destino = número extraído do campo Documento dessa linha do
         extrato, com o dígito verificador recuperado via `mapa_contas`
-        quando possível (ver `_conta_destino_do_documento`).
+        quando possível (ver `_conta_destino_do_documento`) - ou, no caso da
+        Extramercado, a própria aba do extrato onde o Resgate foi lançado (o
+        Documento não é usado nesse caso, pois não traz uma conta real).
 
     A coluna Justificativas não é alterada.
 
     Devolve um relatório com as linhas marcadas, as ambíguas (mais de uma
-    linha do extrato de transferência BBTS batendo com a mesma Data+Valor)
-    e as que bateram mas cujo Documento não deu pra interpretar."""
+    linha do extrato de transferência BBTS/Extramercado batendo com a mesma
+    Data+Valor) e as que bateram mas cujo Documento não deu pra
+    interpretar."""
     tratados = []
     ambiguos = []
     documento_invalido = []
@@ -425,25 +509,36 @@ def atualizar_status_recebimentos_aba(ws, indice_extrato, mapa_contas):
             continue
 
         chave = (*chave_data, _centavos(quantia))
-        candidatos = indice_extrato.get(chave)
-        if not candidatos:
-            continue
+        candidatos = indice_extrato.get(chave) or []
+        candidatos_extramercado = indice_extrato_recebimentos.get(chave) or []
 
         candidatos_transferencia = [
-            (aba_origem, historico, documento)
+            (aba_origem, historico, documento, False)
             for aba_origem, historico, documento in candidatos
             if _eh_transferencia_entre_contas_bbts(str(historico or "").strip(), documento, mapa_contas)
+        ] + [
+            (aba_origem, historico, documento, True)
+            for aba_origem, historico, documento in candidatos_extramercado
+            if _eh_historico_extramercado(str(historico or "").strip())
         ]
         if not candidatos_transferencia:
             continue
         if len(candidatos_transferencia) > 1:
             ambiguos.append((linha, quantia, candidatos_transferencia))
 
-        conta_origem, historico, documento = candidatos_transferencia[0]
-        conta_destino = _conta_destino_do_documento(documento, mapa_contas)
-        if conta_destino is None:
-            documento_invalido.append((linha, quantia, conta_origem, documento))
-            continue
+        conta_origem, historico, documento, eh_extramercado = candidatos_transferencia[0]
+        if eh_extramercado:
+            # Movimentação com a Extramercado: o Documento não traz uma
+            # conta real (não é transferência entre contas BBTS), então a
+            # conta de destino é a própria aba do extrato onde a
+            # Aplicação/Resgate foi lançada (já identifica a conta real).
+            conta_destino = conta_origem
+            conta_origem = "extra"
+        else:
+            conta_destino = _conta_destino_do_documento(documento, mapa_contas)
+            if conta_destino is None:
+                documento_invalido.append((linha, quantia, conta_origem, documento))
+                continue
 
         status = f"{conta_origem} / {conta_destino}"
         cel_status = ws.cell(row=linha, column=COL_STATUS, value=status)
@@ -468,7 +563,7 @@ def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_
     nome nem sequer parece uma data) têm a Etapa 3 pulada - a conciliação
     normal (Passo 2) continua rodando normalmente nelas. Salva o resultado
     em `caminho_conciliacao`."""
-    indice_extrato, mapa_contas = _indexar_extrato(caminho_extratos)
+    indice_extrato, indice_extrato_recebimentos, mapa_contas = _indexar_extrato(caminho_extratos)
     datas_no_extrato = {chave[:3] for chave in indice_extrato}
 
     wb = openpyxl.load_workbook(caminho_conciliacao)
@@ -548,7 +643,7 @@ def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_
                 print(f"     linha {linha} (R$ {quantia:.2f}) candidatos: {candidatos}")
 
         # --- Recebimentos: só transferências internas BBTS (Status = Conta_origem / Conta_destino) ---
-        relatorio_recebimentos = atualizar_status_recebimentos_aba(ws, indice_extrato, mapa_contas)
+        relatorio_recebimentos = atualizar_status_recebimentos_aba(ws, indice_extrato, indice_extrato_recebimentos, mapa_contas)
 
         if relatorio_recebimentos["transferencias"]:
             print(f"  -> Recebimentos marcados como transferência interna BBTS: {len(relatorio_recebimentos['transferencias'])}")
