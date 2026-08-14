@@ -382,30 +382,25 @@ def _contar_pagamentos_pendentes(ws):
     return len(disponiveis)
 
 
-def _conciliar_pagamentos_obs_aba_com_teto(ws, max_combinacao, max_combinacao_obs):
-    """Roda a conciliação inteira (Prioridades 1-4) em UMA aba usando
-    `max_combinacao` como teto FIXO de tamanho de combinação de pagamentos
-    (tanto pra Prioridade 3/4 quanto pro lado dos pagamentos dentro da
-    Prioridade 2). Quem decide se vale a pena repetir isso com um teto maior
-    é `conciliar_pagamentos_obs_aba` (a versão escalonada, logo abaixo) - esta
-    função aqui não sabe nada sobre escalonamento. Devolve um dict com o
-    relatório, ou None se a aba não tiver a estrutura esperada (bloco de
-    Pagamentos e/ou tabela OB/VALOR)."""
-    linha_titulo_pag = localizar_titulo(ws, "PAGAMENTOS")
-    if linha_titulo_pag is None:
-        return None
+def _conciliar_nucleo(pagamentos_disponiveis, obs_disponiveis, max_combinacao, max_combinacao_obs):
+    """Roda as Prioridades 1-4 (ver docstring do módulo) sobre as LISTAS
+    dadas - não lê nem escreve na planilha, só calcula. Usada tanto pela
+    tentativa única quanto por cada rodada do escalonamento cumulativo em
+    `conciliar_pagamentos_obs_aba` (por isso não sabe nada sobre teto
+    escalonado nem sobre pintura - isso é responsabilidade de quem chama).
 
-    col_ob, col_valor, linha_header_ob = localizar_bloco_ob(ws)
-    if col_ob is None:
-        return None
-
-    pagamentos = _linhas_pagamentos(ws, linha_titulo_pag)
-    obs = _linhas_ob_com_linha(ws, col_ob, col_valor, linha_header_ob + 1)
-
+    Devolve (grupos, obs_sem_match, pagamentos_sobrando):
+        - grupos: lista de dicts com "ob_rows"/"ob_codigos"/"valor"/
+          "pagamento_rows" e, quando aplicável (Prioridade 2 com divisão
+          exata), "particoes_pintura".
+        - obs_sem_match: [(ob_row, ob_codigo, valor), ...] que não acharam
+          par usando os itens disponíveis.
+        - pagamentos_sobrando: [(linha, quantia), ...] que sobraram sem
+          nenhuma OB correspondente."""
     # OBs maiores primeiro: tende a reduzir ambiguidade na hora de casar combinações
-    obs_ordenadas = sorted(obs, key=lambda x: x[2], reverse=True)
+    obs_ordenadas = sorted(obs_disponiveis, key=lambda x: x[2], reverse=True)
 
-    disponiveis = list(pagamentos)  # (linha, quantia) ainda não atrelados a nenhuma OB
+    disponiveis = list(pagamentos_disponiveis)  # (linha, quantia) ainda não atrelados a nenhuma OB
     grupos = []
 
     # --- Prioridade 1: match exato de UM único pagamento, pra TODAS as OBs
@@ -485,14 +480,24 @@ def _conciliar_pagamentos_obs_aba_com_teto(ws, max_combinacao, max_combinacao_ob
         usados = set(linhas_pagamento)
         disponiveis = [p for p in disponiveis if p[0] not in usados]
 
-    # pinta os grupos conciliados. Cada "unidade visual" leva sua própria
-    # cor: pra grupo de OB única (prioridades 1, 3 e 4) a unidade é o
-    # grupo inteiro; pra grupo de OBs combinadas (prioridade 2) em que
-    # achamos qual pagamento pertence a qual OB (`particoes_pintura`), cada
-    # OB + seus pagamentos correspondentes vira uma unidade própria, com
-    # sua própria cor - só cai numa cor só pro grupo inteiro se essa
-    # divisão não foi possível. A fonte é sempre resetada pro padrão, pra
-    # não deixar resíduo de cor de letra de alguma rodada anterior.
+    return grupos, obs_sem_match, disponiveis
+
+
+def _pintar_grupos(ws, grupos, col_ob, col_valor):
+    """Pinta na planilha todos os `grupos` já conciliados (formato de
+    `_conciliar_nucleo`). Extraída à parte pra poder rodar UMA vez só, no
+    final, sobre os grupos ACUMULADOS de todas as rodadas do escalonamento
+    em `conciliar_pagamentos_obs_aba` - assim a numeração de cores é
+    contínua e nada fica pintado por uma rodada e sobrescrito por outra.
+
+    Cada "unidade visual" leva sua própria cor: pra grupo de OB única
+    (prioridades 1, 3 e 4) a unidade é o grupo inteiro; pra grupo de OBs
+    combinadas (prioridade 2) em que achamos qual pagamento pertence a
+    qual OB (`particoes_pintura`), cada OB + seus pagamentos
+    correspondentes vira uma unidade própria, com sua própria cor - só cai
+    numa cor só pro grupo inteiro se essa divisão não foi possível. A
+    fonte é sempre resetada pro padrão, pra não deixar resíduo de cor de
+    letra de alguma rodada anterior."""
     cor_idx = 0
     for grupo in grupos:
         particoes = grupo.get("particoes_pintura")
@@ -521,77 +526,83 @@ def _conciliar_pagamentos_obs_aba_com_teto(ws, max_combinacao, max_combinacao_ob
                     cell.fill = fill
                     cell.font = NORMAL_FONT
 
-    return {
-        "aba": ws.title,
-        "grupos": grupos,
-        "obs_sem_match": obs_sem_match,
-        "pagamentos_sem_ob": disponiveis,
-        "pagamentos_todos": pagamentos,
-        "total_obs": len(obs),
-    }
-
 
 def conciliar_pagamentos_obs_aba(ws, max_combinacao=None, max_combinacao_obs=6, max_combinacao_minimo=6):
-    """Concilia pagamentos com OBs dentro de UMA aba, de forma ESCALONADA:
-    tenta primeiro com um teto MÁXIMO de tamanho de combinação de
-    pagamentos - a tentativa mais permissiva, que já cobre de cara
-    qualquer combinação que uma tentativa menor também acharia. Só se essa
-    tentativa deixar pelo menos uma OB sem match é que o teto vai sendo
-    DIMINUÍDO (de 1 em 1) até no mínimo `max_combinacao_minimo`: um teto
-    menor é mais conservador e pode resolver casos que o teto máximo não
-    resolveu - com valores repetidos (ex.: vários pagamentos de R$300,00
-    iguais), uma OB processada com teto alto pode "roubar" gananciosamente
-    uma combinação grande de pagamentos que na verdade pertenceria a outra
-    OB (ver comentário na Prioridade 2, acima); um teto menor evita essa
-    combinação grande e pode deixar sobrar exatamente os pagamentos que a
-    outra OB precisava.
+    """Concilia pagamentos com OBs dentro de UMA aba, de forma ESCALONADA e
+    CUMULATIVA: tenta primeiro com um teto MÁXIMO de tamanho de combinação
+    de pagamentos - a tentativa mais permissiva, que já cobre de cara
+    qualquer combinação que uma tentativa menor também acharia.
 
-    O teto MÁXIMO inicial não é mais um número fixo: é calculado por aba,
-    como a quantidade de pagamentos que sobram sem OB depois da Prioridade
-    1 (match exato) - ver `_contar_pagamentos_pendentes`. Ou seja, o teto
-    já começa grande o bastante pra cobrir QUALQUER combinação possível
-    com os pagamentos daquela aba, e desce a partir daí até
-    `max_combinacao_minimo`. Ex.: se sobraram 32 pagamentos sem match
-    direto numa aba, a escalonada tenta teto 32, 31, 30, ... até
-    `max_combinacao_minimo` (parando antes se algum teto já conciliar
-    tudo).
+    Qualquer OB (e os pagamentos que ela usou) que ache match nessa
+    tentativa fica CONFIRMADA e sai do jogo - as rodadas seguintes, com
+    teto menor, só voltam a mexer nas OBs que AINDA sobraram sem par,
+    testando-as contra o que também sobrou de pagamentos. Ou seja,
+    diferente de antes, um match achado com um teto grande não é jogado
+    fora só porque outra OB (sem nenhuma relação com esse match) ainda não
+    achou par e obriga o teto a continuar descendo.
 
-    NOTA sobre performance: em abas com muitos pagamentos pendentes
-    (dezenas), a trava `LIMITE_COMBINACOES` já poda a maior parte das
-    tentativas de tamanho grande - pode parecer que "não adianta" começar
-    tão alto, já que muitos tetos intermediários testam exatamente os
-    mesmos tamanhos de combinação (todos pulados). MAS o pool de
-    pagamentos disponíveis vai ENCOLHENDO conforme OBs anteriores são
-    conciliadas dentro da mesma tentativa - um tamanho de combinação
-    inviável (por `LIMITE_COMBINACOES`) contra o pool cheio pode virar
-    viável mais adiante, contra o pool já reduzido, pra uma OB processada
-    depois. Por isso o teto inicial não é limitado a um "teto prático"
-    calculado sobre o total de pendentes - isso já foi tentado e perdeu
-    match real numa aba de teste.
+    O teto vai sendo DIMINUÍDO (de 1 em 1) até no mínimo
+    `max_combinacao_minimo`: um teto menor é mais conservador e pode
+    resolver casos que um teto maior não resolveu - com valores repetidos
+    (ex.: vários pagamentos de R$300,00 iguais), uma OB processada com
+    teto alto pode "roubar" gananciosamente uma combinação grande de
+    pagamentos que na verdade pertenceria a outra OB (ver comentário na
+    Prioridade 2, acima); um teto menor evita essa combinação grande e
+    pode deixar sobrar exatamente os pagamentos que a outra OB precisava.
+    Isso continua valendo por rodada (dentro de uma mesma tentativa de
+    teto, todas as OBs ainda pendentes são processadas juntas, na mesma
+    ordem de prioridade de sempre) - só a forma de ACUMULAR entre tetos
+    diferentes é que mudou.
+
+    O teto MÁXIMO inicial é calculado por aba, como a quantidade de
+    pagamentos que sobram sem OB depois da Prioridade 1 (match exato) -
+    ver `_contar_pagamentos_pendentes`. Ou seja, o teto já começa grande o
+    bastante pra cobrir QUALQUER combinação possível com os pagamentos
+    daquela aba, e desce a partir daí até `max_combinacao_minimo`. Ex.: se
+    sobraram 32 pagamentos sem match direto numa aba, a escalonada tenta
+    teto 32, 31, 30, ... até `max_combinacao_minimo` (parando antes se
+    algum teto já conciliar tudo que restava).
+
+    NOTA sobre performance: como o pool de OBs e pagamentos pendentes só
+    ENCOLHE a cada rodada (nunca é resetado), tamanhos de combinação que
+    a trava `LIMITE_COMBINACOES` recusava numa rodada com pool cheio podem
+    passar a ser viáveis nas rodadas seguintes, já com o pool reduzido -
+    isso é uma vantagem adicional da versão cumulativa: além de não perder
+    matches já achados, ela também aumenta a chance de matches que exigem
+    combinações grandes (ex.: 8-9 pagamentos) serem encontrados, já que o
+    pool relevante pra essa checagem vai diminuindo a cada match confirmado.
 
     `max_combinacao`, se informado, funciona como um teto ABSOLUTO por
     cima desse valor calculado - útil como trava de segurança em abas com
-    MUITOS pagamentos sem match, pra não deixar a busca cara demais (cada
-    tentativa reconcilia a aba inteira do zero). Se omitido (None, padrão),
-    não há teto artificial: o teto inicial é sempre o número de pagamentos
-    pendentes daquela aba.
+    MUITOS pagamentos sem match, pra não deixar a busca cara demais. Se
+    omitido (None, padrão), não há teto artificial: o teto inicial é
+    sempre o número de pagamentos pendentes daquela aba.
 
-    Assim que uma tentativa conseguir conciliar TODAS as OBs, para ali -
-    não continua diminuindo o teto atrás de um valor ainda menor que também
-    resolvesse tudo, mesmo que o resultado tenha usado uma combinação
-    grande.
-
-    Cada tentativa reconcilia a aba inteira do zero (a pintura da tentativa
-    anterior é sobrescrita) - o cálculo em si só olha os VALORES das células,
-    então repetir isso não deixa resíduo nem depende de rodadas anteriores.
+    Assim que não sobrar nenhuma OB sem match, para ali - não continua
+    diminuindo o teto à toa.
 
     Se `max_combinacao_minimo >= teto inicial`, roda só uma vez com esse
     teto (sem escalonamento).
 
-    Devolve um dict com o relatório (o da última tentativa rodada), com uma
-    chave extra "max_combinacao_usado" indicando qual teto foi o vencedor.
-    Ou None se a aba não tiver a estrutura esperada (bloco de Pagamentos
-    e/ou tabela OB/VALOR)."""
+    A pintura das células só acontece UMA vez, no final, sobre todos os
+    grupos acumulados de todas as rodadas (ver `_pintar_grupos`).
+
+    Devolve um dict com o relatório consolidado, com uma chave extra
+    "max_combinacao_usado" indicando o MENOR teto que chegou a ser
+    tentado (só informativo - tetos diferentes podem ter resolvido OBs
+    diferentes). Ou None se a aba não tiver a estrutura esperada (bloco de
+    Pagamentos e/ou tabela OB/VALOR)."""
+    linha_titulo_pag = localizar_titulo(ws, "PAGAMENTOS")
+    if linha_titulo_pag is None:
+        return None
+
+    col_ob, col_valor, linha_header_ob = localizar_bloco_ob(ws)
+    if col_ob is None:
+        return None
+
+    pagamentos = _linhas_pagamentos(ws, linha_titulo_pag)
+    obs = _linhas_ob_com_linha(ws, col_ob, col_valor, linha_header_ob + 1)
+
     n_pendentes = _contar_pagamentos_pendentes(ws)
     if n_pendentes is None:
         return None
@@ -600,23 +611,45 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=None, max_combinacao_obs=6, 
     teto_inicial = max(teto_inicial, 1)  # nunca roda com teto menor que 1
     teto_minimo = min(max_combinacao_minimo, teto_inicial)
 
-    resultado = None
+    obs_restantes = list(obs)
+    pagamentos_restantes = list(pagamentos)
+    grupos_totais = []
+    teto_usado = teto_inicial
+
     for teto in range(teto_inicial, teto_minimo - 1, -1):
-        resultado = _conciliar_pagamentos_obs_aba_com_teto(ws, max_combinacao=teto, max_combinacao_obs=max_combinacao_obs)
-        if resultado is None:
-            return None
+        if not obs_restantes:
+            break
 
-        resultado["max_combinacao_usado"] = teto
+        teto_usado = teto
+        grupos, obs_sem_match, pagamentos_restantes = _conciliar_nucleo(
+            pagamentos_restantes, obs_restantes, max_combinacao=teto, max_combinacao_obs=max_combinacao_obs
+        )
 
-        if not resultado["obs_sem_match"]:
-            # tudo conciliado - fica com esse resultado, mesmo que tenha
-            # usado uma combinação grande
+        n_resolvidas = len(obs_restantes) - len(obs_sem_match)
+        grupos_totais.extend(grupos)
+        obs_restantes = obs_sem_match
+
+        if not obs_restantes:
             break
         if teto > teto_minimo:
-            print(f"  ⬇️  [{ws.title}] {len(resultado['obs_sem_match'])} OB(s) ainda sem match com teto de {teto} pagamento(s) "
-                  f"- tentando com teto {teto - 1} (mais conservador)...")
+            if n_resolvidas > 0:
+                print(f"  ✅ [{ws.title}] {n_resolvidas} OB(s) conciliada(s) com teto {teto} (match(es) mantido(s)) - "
+                      f"ainda restam {len(obs_restantes)}, tentando com teto {teto - 1} (mais conservador)...")
+            else:
+                print(f"  ⬇️  [{ws.title}] {len(obs_restantes)} OB(s) ainda sem match com teto de {teto} pagamento(s) "
+                      f"- tentando com teto {teto - 1} (mais conservador)...")
 
-    return resultado
+    _pintar_grupos(ws, grupos_totais, col_ob, col_valor)
+
+    return {
+        "aba": ws.title,
+        "grupos": grupos_totais,
+        "obs_sem_match": obs_restantes,
+        "pagamentos_sem_ob": pagamentos_restantes,
+        "pagamentos_todos": pagamentos,
+        "total_obs": len(obs),
+        "max_combinacao_usado": teto_usado,
+    }
 
 
 def conciliar_pagamentos_obs(caminho, max_combinacao=None, max_combinacao_obs=6, max_combinacao_minimo=6, abas=None):
