@@ -14,8 +14,10 @@ import argparse
 
 import openpyxl
 
-from estilos import NORMAL_FONT, BORDER, NO_BORDER, NO_FILL, CENTER, RIGHT
-from helpers_planilha import localizar_bloco_ob, _ler_linhas_ob, _normalizar_abas
+from processar_pagamentos import (
+    NORMAL_FONT, BORDER, NO_BORDER, NO_FILL, CENTER, RIGHT,
+    localizar_bloco_ob, _ler_linhas_ob, _normalizar_abas,
+)
 
 
 def remover_valor_zero_aba(ws):

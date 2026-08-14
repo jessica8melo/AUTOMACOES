@@ -42,8 +42,10 @@ import math
 import openpyxl
 from openpyxl.styles import PatternFill
 
-from estilos import CORES_CONCILIACAO, NORMAL_FONT, NUM_COLS_PRINCIPAL
-from helpers_planilha import localizar_titulo, localizar_bloco_ob, _centavos, _normalizar_abas
+from processar_pagamentos import (
+    CORES_CONCILIACAO, NORMAL_FONT, NUM_COLS_PRINCIPAL,
+    localizar_titulo, localizar_bloco_ob, _centavos, _normalizar_abas,
+)
 
 # trava de segurança: para um dado tamanho de combinação, se o número de
 # combinações possíveis (n escolhe k) passar disso, esse tamanho é pulado em

@@ -53,8 +53,7 @@ import re
 
 import openpyxl
 
-from estilos import BOLD_FONT
-from helpers_planilha import localizar_titulo, _centavos, _normalizar_abas
+from processar_pagamentos import BOLD_FONT, localizar_titulo, _centavos, _normalizar_abas
 from conciliacao import conciliar_pagamentos_obs_aba
 
 MESES_PT = {
