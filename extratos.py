@@ -10,19 +10,24 @@ extrato). Para cada pagamento:
        dela começar com "Tarifa" ou "Tar agrupad" (ex.: "Tar agrupadas"),
        preenche a coluna "Status" com "TARIFA" (independentemente do
        pagamento ter sido conciliado com uma OB). Ver `_eh_historico_tarifa`.
-    2) Se achar e o Histórico for uma transferência interna entre contas do
+    2) Se achar e o Histórico for um imposto (contém a palavra
+       "Imposto"/"Impostos" ou uma sigla de tributo como IOF, IRRF, DARF,
+       ISS), preenche a coluna "Status" com "IMPOSTO" (mesma regra da
+       TARIFA acima, independentemente do pagamento ter sido conciliado com
+       uma OB). Ver `_eh_historico_imposto`.
+    3) Se achar e o Histórico for uma transferência interna entre contas do
        grupo BBTS (ver `_eh_transferencia_entre_contas_bbts`), preenche
        "Status" no formato "Conta_origem / Conta_destino" (também
-       independentemente de conciliação com OB, igual TARIFA).
-    3) Se achar e o Histórico for exatamente "Pagamento" ou "Pagamentos
+       independentemente de conciliação com OB, igual TARIFA/IMPOSTO).
+    4) Se achar e o Histórico for exatamente "Pagamento" ou "Pagamentos
        Diversos" (sem contar maiúsculas/minúsculas e espaços), a linha é
        ignorada - nada é preenchido.
-    4) Se achar e não for nenhum dos casos acima, preenche "Status" com o
+    5) Se achar e não for nenhum dos casos acima, preenche "Status" com o
        texto do Histórico do extrato. A coluna "Justificativas - Não
        reconciliadas" só recebe uma justificativa quando o pagamento NÃO
        tiver sido conciliado com nenhuma OB no Passo 2 (pra pagamentos já
        conciliados, só o Status é preenchido).
-    5) Se não achar nenhuma linha do extrato com aquela Data+Valor, a linha
+    6) Se não achar nenhuma linha do extrato com aquela Data+Valor, a linha
        é deixada como está (fica sinalizada no log para conferência
        manual).
 
@@ -81,6 +86,24 @@ def _eh_historico_tarifa(historico_str):
     bancária (Status = 'TARIFA'), buscando os padrões em qualquer parte do
     texto (não só no início)."""
     return bool(_RE_TARIFA.search(historico_str) or _RE_TAR_AGRUPADAS.search(historico_str))
+
+
+# Padrões de Histórico do extrato que devem ser tratados como imposto
+# (Status = "IMPOSTO"), mesma lógica da regra de TARIFA acima: procurados
+# em qualquer parte do texto (não só no início), pra cobrir descrições
+# maiores em que o banco embute o trecho no meio, ex.: "Débito Cobrança
+# IOF sobre Op. Crédito". Cobre a palavra "Imposto"/"Impostos" e as siglas
+# de tributo mais comuns em extratos bancários (IOF, IRRF, DARF, ISS).
+_RE_IMPOSTO = re.compile(r"\bimpostos?\b", re.IGNORECASE)
+_RE_SIGLA_IMPOSTO = re.compile(r"\b(?:IOF|IRRF|DARF|ISS)\b", re.IGNORECASE)
+
+
+def _eh_historico_imposto(historico_str):
+    """True se o histórico do extrato deve ser tratado como imposto
+    (Status = 'IMPOSTO'), buscando os padrões (palavra 'Imposto'/'Impostos'
+    ou siglas de tributo como IOF, IRRF, DARF, ISS) em qualquer parte do
+    texto (não só no início)."""
+    return bool(_RE_IMPOSTO.search(historico_str) or _RE_SIGLA_IMPOSTO.search(historico_str))
 
 
 # Histórico de uma transferência interna entre contas do grupo BBTS, ex.:
@@ -257,10 +280,14 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliada
       - se achar e o Histórico começar com 'Tarifa' ou 'Tar agrupad'
         (ver `_eh_historico_tarifa`) -> Status = 'TARIFA' (independe de ter
         sido conciliado com OB).
+      - se achar e o Histórico for um imposto (contém 'Imposto'/'Impostos'
+        ou uma sigla de tributo como IOF, IRRF, DARF, ISS - ver
+        `_eh_historico_imposto`) -> Status = 'IMPOSTO' (independe de ter
+        sido conciliado com OB, igual TARIFA).
       - se achar e o Histórico for uma transferência interna entre contas
         do grupo BBTS (ver `_eh_transferencia_entre_contas_bbts`) -> Status
         = 'Conta_origem / Conta_destino' (independe de ter sido conciliado
-        com OB, igual TARIFA).
+        com OB, igual TARIFA/IMPOSTO).
       - se achar e o Histórico for exatamente 'Pagamento' ou 'Pagamentos
         Diversos' -> nada é alterado (ignorado).
       - se achar e não for nenhum dos casos acima -> Status = texto do
@@ -270,10 +297,11 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliada
       - se não achar nenhuma correspondência -> nada é alterado (fica para
         conferência manual).
     Devolve um relatório (listas de linhas tratadas como tarifa, como
-    transferência interna, mandadas pra contas a pagar, com status
-    preenchido mas já conciliadas com OB, ignoradas por serem histórico
-    genérico, sem correspondência no extrato e ambíguas)."""
+    imposto, como transferência interna, mandadas pra contas a pagar, com
+    status preenchido mas já conciliadas com OB, ignoradas por serem
+    histórico genérico, sem correspondência no extrato e ambíguas)."""
     tratados_tarifa = []
+    tratados_imposto = []
     tratados_transferencia = []
     tratados_contas_a_pagar = []
     tratados_conciliados_com_status = []
@@ -306,6 +334,12 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliada
             tratados_tarifa.append((linha, quantia, aba_origem, historico_str))
             continue
 
+        if _eh_historico_imposto(historico_str):
+            cel_status = ws.cell(row=linha, column=COL_STATUS, value="IMPOSTO")
+            cel_status.font = BOLD_FONT
+            tratados_imposto.append((linha, quantia, aba_origem, historico_str))
+            continue
+
         if _eh_transferencia_entre_contas_bbts(historico_str, documento, mapa_contas):
             conta_destino = _conta_destino_do_documento(documento, mapa_contas)
             if conta_destino is not None:
@@ -329,6 +363,7 @@ def atualizar_status_sem_conciliacao_aba(ws, pagamentos_todos, linhas_conciliada
 
     return {
         "tarifa": tratados_tarifa,
+        "imposto": tratados_imposto,
         "transferencia": tratados_transferencia,
         "contas_a_pagar": tratados_contas_a_pagar,
         "conciliados_com_status": tratados_conciliados_com_status,
@@ -479,6 +514,10 @@ def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_
               f"(sem OB: {len(resultado_conciliacao['pagamentos_sem_ob'])})")
         print(f"  -> Marcados como TARIFA: {len(relatorio['tarifa'])}")
         for linha, quantia, aba_origem, historico in relatorio["tarifa"]:
+            print(f"     linha {linha} (R$ {quantia:.2f}) <- [{aba_origem}] {historico}")
+
+        print(f"  -> Marcados como IMPOSTO: {len(relatorio['imposto'])}")
+        for linha, quantia, aba_origem, historico in relatorio["imposto"]:
             print(f"     linha {linha} (R$ {quantia:.2f}) <- [{aba_origem}] {historico}")
 
         print(f"  -> Marcados como transferência interna BBTS: {len(relatorio['transferencia'])}")
