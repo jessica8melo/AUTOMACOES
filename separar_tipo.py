@@ -1,25 +1,19 @@
 """
-Script para separar, em TODAS as abas de uma planilha, os lançamentos em
-Recebimentos e Pagamentos, mantendo cada aba original (sem criar abas novas),
-empilhando Recebimentos no topo e Pagamentos embaixo, com uma borda mais
-grossa marcando a divisão entre os dois blocos.
+Passo 2 (chamado por test.py, via `processar_aba`, uma aba por vez): separa
+os lançamentos em Recebimentos e Pagamentos dentro da mesma aba, empilhando 
+Recebimentos no topo e Pagamentos embaixo.
 
 Regra usada: qualquer valor da coluna "Tipo" que COMEÇA com "Recebimento"
 vai para o bloco de Recebimentos; qualquer valor que COMEÇA com "Pagamento"
 vai para o bloco de Pagamentos. Cobre variações como "Recebimento Div." /
 "Pagamento Div.".
 
-Cada aba é processada de forma independente, e só é alterada se tiver a
-estrutura esperada (cabeçalho com "Tipo" na coluna B). Abas sem essa
-estrutura são ignoradas e avisadas no relatório final.
-
-Uso:
-    python separar_tipo_v2.py caminho_da_planilha.xlsx
+A aba só é alterada se tiver a estrutura esperada (cabeçalho com "Tipo" na
+coluna B); caso contrário `processar_aba` devolve None e é ignorada por
+quem chamou.
 """
 
-import sys
 import datetime
-import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.utils.datetime import from_excel
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -180,7 +174,7 @@ def aplicar_borda_grossa_inferior(ws, row, col_inicial, num_cols):
 
 def limpar_aba(ws):
     """Remove valores, formatação e merges existentes, mantendo a aba (mesmo
-    nome/posição), para reconstruir o conteúdo do zero dentro dela."""
+    nome/posição) para reconstruir o conteúdo do zero dentro dela."""
     for mc in list(ws.merged_cells.ranges):
         ws.unmerge_cells(str(mc))
     max_row = ws.max_row
@@ -196,12 +190,9 @@ def limpar_aba(ws):
 
 
 def corrigir_data_serial(valor, epoch):
-    """Algumas linhas trazem a Data Transação como número serial do Excel
-    (célula original sem formatação de data -> openpyxl lê como int/float
-    em vez de datetime). Converte esses casos para datetime, usando o
-    epoch da própria planilha (evita erro de 1 dia entre epochs 1900/1904).
-    Valores que já são datetime, ou que não parecem data, são devolvidos
-    sem alteração."""
+    """Converte a Data Transação para datetime, usando o
+    epoch da própria planilha. Valores que já são datetime, ou que 
+    não parecem data, são devolvidos sem alteração."""
     if isinstance(valor, (datetime.datetime, datetime.date)):
         return valor
     if isinstance(valor, bool):
@@ -339,46 +330,3 @@ def processar_aba(ws, epoch):
         "extra": len(linhas_extra) if headers_extra is not None else None,
         "avisos": avisos,
     }
-
-
-def main(caminho):
-    wb = openpyxl.load_workbook(caminho)
-
-    relatorios = []
-    puladas = []
-
-    for nome in wb.sheetnames:
-        ws = wb[nome]
-        resultado = processar_aba(ws, wb.epoch)
-        if resultado is None:
-            puladas.append(nome)
-        else:
-            relatorios.append(resultado)
-
-    wb.save(caminho)
-
-    print(f"Abas processadas: {len(relatorios)}")
-    print(f"Abas puladas (sem coluna 'Tipo' no cabeçalho): {len(puladas)}")
-    if puladas:
-        print("  ->", ", ".join(puladas))
-    print()
-    total_avisos = 0
-    for rel in relatorios:
-        extra_txt = f", extra OB/VALOR: {rel['extra']}" if rel["extra"] is not None else ""
-        print(f"[{rel['aba']}] Recebimentos: {rel['recebimentos']} | "
-              f"Pagamentos: {rel['pagamentos']} | Outros: {rel['outros']}{extra_txt}")
-        if rel["avisos"]:
-            total_avisos += len(rel["avisos"])
-            print(f"    ATENÇÃO: {len(rel['avisos'])} célula(s) fora do padrão conhecido "
-                  f"(não foram movidas, pois não sabemos onde encaixá-las):")
-            for r, col_letra, v in rel["avisos"][:10]:
-                print(f"      - {col_letra}{r}: {v!r}")
-            if len(rel["avisos"]) > 10:
-                print(f"      ... e mais {len(rel['avisos']) - 10}")
-    if total_avisos == 0:
-        print("\nNenhum conteúdo fora do padrão encontrado.")
-
-
-if __name__ == "__main__":
-    caminho = sys.argv[1] if len(sys.argv) > 1 else "conciliacao.xlsx"
-    main(caminho)

@@ -1,25 +1,10 @@
 """
-    - estilos.py           constantes de fonte/cor/borda
-    - helpers_planilha.py  helpers de localização/leitura genéricos
-    - processar_pagamentos.py  script principal (Passos 2 e 3)
-
-Uso:
-    python processar_pagamentos_unificado.py caminho_da_planilha.xlsx
-    python processar_pagamentos_unificado.py caminho_da_planilha.xlsx --extratos saida.xlsx
+Módulo de constantes/helpers compartilhados (fonte, cor, borda, localização
+de blocos na planilha) usado por remover_zero.py, separar_tipo.py,
+conciliacao.py e extratos.py.
 """
 
-import argparse
-
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-
-# NOTA: os imports de `conciliacao` e `extratos` ficam propositalmente lá
-# embaixo, dentro do bloco `if __name__ == "__main__":`, e não aqui em
-# cima. Este arquivo agora concentra as constantes e helpers que antes
-# viviam em estilos.py/helpers_planilha.py, e tanto conciliacao.py quanto
-# extratos.py importam essas constantes/helpers DAQUI. Se `conciliacao`
-# fosse importado aqui em cima, antes das constantes abaixo serem
-# definidas, teríamos um import circular (processar_pagamentos ->
-# conciliacao -> processar_pagamentos, pegando o módulo pela metade).
 
 FONT_NAME = "Arial"
 NORMAL_FONT = Font(name=FONT_NAME, size=10)
@@ -109,8 +94,7 @@ def _ler_linhas_ob(ws, col_ob, col_valor, linha_inicial):
     totalmente vazia nas duas colunas, ou na primeira linha em que a coluna
     VALOR contenha algo que não seja número (sinal de que a tabela OB/VALOR
     terminou e começou outra tabela colada em seguida, sem linha vazia de
-    separação - caso real observado na aba "07.08.25", onde uma tabela de
-    "DESPESAS / RESPONSABILIDADE" vem logo abaixo)."""
+    separação)."""
     linhas = []
     r = linha_inicial
     while True:
@@ -137,25 +121,3 @@ def _normalizar_abas(abas):
 def _centavos(valor):
     """Converte pra inteiro em centavos, pra comparar sem erro de ponto flutuante."""
     return round(float(valor) * 100)
-
-if __name__ == "__main__":
-    # Importados aqui (e não no topo do arquivo) para evitar import
-    # circular - ver nota logo acima das constantes.
-    from conciliacao import conciliar_pagamentos_obs
-    from extratos import atualizar_status_sem_conciliacao
-
-    parser = argparse.ArgumentParser(description="Processa pagamentos e OBs em uma planilha Excel.")
-    parser.add_argument("caminho", nargs="?", default="conciliacao.xlsx", help="Caminho da planilha Excel")
-    parser.add_argument("--aba", "--abas", dest="abas", action="append", help="Nome da aba a ser processada. Pode ser informado mais de uma vez.")
-    parser.add_argument("--extratos", dest="extratos", default=None, help="Caminho da planilha de extratos (saida.xlsx). Se informado, roda também o passo 3 (marcar TARIFA / status nos pagamentos sem OB).")
-    parser.add_argument("--max-combinacao-pagamentos", dest="max_combinacao", type=int, default=None, help="Trava de segurança (opcional) pro tamanho máximo de combinação de pagamentos (2 ou mais) testada nas prioridades 3 e 4, quando uma OB isolada não bate com nenhum pagamento sozinho. Por padrão (não informado) não há trava: o escalonamento interno começa já no número de pagamentos pendentes daquela aba e só desce (até 6) se sobrarem OBs sem match. Informe um valor aqui só se quiser limitar isso por baixo, em abas com muitos pagamentos sem match, pra não deixar a busca cara demais.")
-    args = parser.parse_args()
-
-    if args.extratos:
-        # já conciliamos por OB dentro de atualizar_status_sem_conciliacao,
-        # então não precisa chamar conciliar_pagamentos_obs de novo aqui.
-        atualizar_status_sem_conciliacao(
-            args.caminho, args.extratos, max_combinacao=args.max_combinacao, abas=args.abas
-        )
-    else:
-        conciliar_pagamentos_obs(args.caminho, max_combinacao=args.max_combinacao, abas=args.abas)

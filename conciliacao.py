@@ -9,9 +9,8 @@ A busca por match segue uma ordem de prioridade:
     2) Entre as OBs que sobraram sem match no passo 1, tenta somar 2 ou
        mais delas entre si (ex.: duas remessas que na prática foram pagas
        juntas em um único lote) e ver se essa soma bate com um pagamento ou
-       combinação de pagamentos ainda disponível - ver
-       `_buscar_combo_obs_pagamentos`. Importante isso vir ANTES do passo
-       3: se uma OB isolada "coubesse" dentro de um pool de pagamentos de
+       combinação de pagamentos ainda disponível. Importante isso vir ANTES d
+       o passo 3: se uma OB isolada "coubesse" dentro de um pool de pagamentos de
        valor repetido (ex.: vários pagamentos de R$300,00 iguais), o passo
        3 casaria essa OB sozinha com um subconjunto arbitrário desse pool,
        "gastando" pagamentos que na verdade deveriam ficar reservados para
@@ -39,12 +38,11 @@ alterado nelas).
 import itertools
 import math
 
-import openpyxl
 from openpyxl.styles import PatternFill
 
 from processar_pagamentos import (
     CORES_CONCILIACAO, NORMAL_FONT, NUM_COLS_PRINCIPAL,
-    localizar_titulo, localizar_bloco_ob, _centavos, _normalizar_abas,
+    localizar_titulo, localizar_bloco_ob, _centavos,
 )
 
 # trava de segurança: para um dado tamanho de combinação, se o número de
@@ -152,16 +150,7 @@ def _particionar_combo_por_ob(combo_obs, combo_pagamentos, max_tamanho):
 
 def _buscar_subconjunto(pagamentos_disponiveis, alvo_centavos, max_tamanho):
     """Procura pagamento(s) cuja soma bate exatamente com `alvo_centavos`,
-    seguindo esta ordem de prioridade:
-
-        1) Match exato de UM único pagamento (retorna na hora, sem olhar
-           para combinações de 2+ itens).
-        2) Combinações de 2 ou mais pagamentos, priorizando as que usam
-           pagamentos mais próximos entre si na planilha (idealmente linhas
-           vizinhas / contíguas) - ver `_score_proximidade`.
-        3) Se não houver combinação "próxima", qualquer combinação exata
-           encontrada pela busca com poda serve (tentativa e erro geral,
-           sem preferência de posição).
+    seguindo a ordem de prioridade.
 
     Devolve a combinação (tupla de (linha, quantia)) ou None se nada bater.
 
@@ -294,8 +283,7 @@ def _buscar_combo_obs_pagamentos(obs_disponiveis, pagamentos_disponiveis, max_ta
     módulo): quando uma OB isolada não bate com nenhum pagamento nem
     combinação de pagamentos, tenta somar 2 ou mais OBs entre si (dentre as
     que já sobraram sem match) e ver se essa soma bate com um pagamento ou
-    combinação de pagamentos ainda disponível - caso real de várias remessas
-    (OBs) que na prática saíram juntas num único lote/pagamento.
+    combinação de pagamentos ainda disponível.
 
     Para não repetir uma busca combinatória cara a cada combinação de OBs
     testada, as somas possíveis do lado dos pagamentos são pré-computadas
@@ -652,66 +640,3 @@ def conciliar_pagamentos_obs_aba(ws, max_combinacao=None, max_combinacao_obs=6, 
         "total_obs": len(obs),
         "max_combinacao_usado": teto_usado,
     }
-
-
-def conciliar_pagamentos_obs(caminho, max_combinacao=None, max_combinacao_obs=6, max_combinacao_minimo=6, abas=None):
-    wb = openpyxl.load_workbook(caminho)
-    abas_selecionadas = _normalizar_abas(abas)
-    abas_alvo = abas_selecionadas or wb.sheetnames
-
-    resultados = []
-    for nome in abas_alvo:
-        if nome not in wb.sheetnames:
-            print(f"Aba '{nome}' não encontrada. Ignorando.")
-            continue
-
-        ws = wb[nome]
-        resultado = conciliar_pagamentos_obs_aba(
-            ws, max_combinacao=max_combinacao, max_combinacao_obs=max_combinacao_obs,
-            max_combinacao_minimo=max_combinacao_minimo,
-        )
-        if resultado is not None:
-            resultados.append(resultado)
-
-    wb.save(caminho)
-
-    if not resultados:
-        print("Nenhuma aba com bloco de Pagamentos + tabela OB/VALOR foi encontrada.")
-        return
-
-    for res in resultados:
-        n_obs_conciliadas = sum(len(grupo["ob_rows"]) for grupo in res["grupos"])
-        print(f"\n[{res['aba']}] OBs conciliadas: {n_obs_conciliadas} de {res['total_obs']} (em {len(res['grupos'])} grupo(s))")
-        for grupo in res["grupos"]:
-            n_pag = len(grupo["pagamento_rows"])
-            composicao = "1 pagamento" if n_pag == 1 else f"{n_pag} pagamentos somados"
-            obs_str = " + ".join(str(c) for c in grupo["ob_codigos"])
-            print(f"  OB(s) {obs_str} (R$ {grupo['valor']:.2f} total) <- {composicao}, linha(s) {grupo['pagamento_rows']}")
-
-        if res["obs_sem_match"]:
-            print(f"  ⚠️  ATENÇÃO: {len(res['obs_sem_match'])} OB(s) SEM correspondência encontrada nesta aba!")
-            for ob_row, ob_codigo, valor in res["obs_sem_match"]:
-                print(f"    OB {ob_codigo} (R$ {valor:.2f})")
-
-        if res["pagamentos_sem_ob"]:
-            print(f"  Pagamentos sem OB correspondente: {len(res['pagamentos_sem_ob'])}")
-            for linha, quantia in res["pagamentos_sem_ob"]:
-                print(f"    Linha {linha} (R$ {quantia:.2f})")
-
-    # Resumo global: como toda OB deveria, em tese, ter um pagamento (ou
-    # combinação de pagamentos) correspondente, qualquer OB sem match é um
-    # sinal de que algo precisa ser conferido manualmente. Por isso esse
-    # aviso fica bem destacado no final, reunindo todas as abas, e não só
-    # espalhado aba por aba.
-    total_obs_sem_match = sum(len(res["obs_sem_match"]) for res in resultados)
-    if total_obs_sem_match > 0:
-        print("\n" + "=" * 60)
-        print(f"⚠️  ATENÇÃO: {total_obs_sem_match} OB(s) NÃO conciliada(s) no total!")
-        print("=" * 60)
-        for res in resultados:
-            if res["obs_sem_match"]:
-                for ob_row, ob_codigo, valor in res["obs_sem_match"]:
-                    print(f"  [{res['aba']}] OB {ob_codigo} (R$ {valor:.2f}) - linha {ob_row}")
-        print("=" * 60)
-    else:
-        print("\n✅ Todas as OBs foram conciliadas com sucesso em todas as abas.")

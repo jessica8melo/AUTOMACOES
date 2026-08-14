@@ -1,16 +1,8 @@
 """
-Passo 1: em cada aba, remove da tabela de OBs (colunas "OB"/"VALOR") todas
-as linhas em que VALOR = 0.
-
-Pode ser rodado isoladamente (ver bloco __main__ no final), embora
-processar_pagamentos.py já chame essa mesma etapa automaticamente antes da
-conciliação - não é necessário rodar os dois separadamente.
-
-Uso:
-    python remover_zero.py caminho_da_planilha.xlsx
+Passo 1 (chamado por test.py, via `remover_valor_zero`): em cada aba,
+remove da tabela de OBs (colunas "OB"/"VALOR") todas as linhas em que
+VALOR = 0.
 """
-
-import argparse
 
 import openpyxl
 
@@ -87,12 +79,3 @@ def remover_valor_zero(caminho, abas=None):
         print("Nenhuma aba com tabela OB/VALOR foi encontrada. Nada foi alterado.")
     else:
         print(f"\nTotal de OBs removidas: {total_removidas}, em {abas_processadas} aba(s).")
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Remove OBs com VALOR = 0 de todas as abas de uma planilha.")
-    parser.add_argument("caminho", nargs="?", default="conciliacao.xlsx", help="Caminho da planilha Excel")
-    parser.add_argument("--aba", "--abas", dest="abas", action="append", help="Nome da aba a ser processada. Pode ser informado mais de uma vez.")
-    args = parser.parse_args()
-
-    remover_valor_zero(args.caminho, abas=args.abas)
