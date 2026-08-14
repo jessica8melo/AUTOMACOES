@@ -422,7 +422,7 @@ def atualizar_status_recebimentos_aba(ws, indice_extrato, mapa_contas):
     }
 
 
-def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_combinacao=None, max_combinacao_obs=6, abas=None):
+def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_combinacao=None, abas=None):
     """Roda a conciliação normal (pagamento <-> OB) em TODAS as abas alvo e,
     além disso, para cada aba cuja DATA (extraída do próprio nome da aba,
     ex.: '07.08.25') tiver pelo menos um lançamento na mesma data dentro da
@@ -447,7 +447,7 @@ def atualizar_status_sem_conciliacao(caminho_conciliacao, caminho_extratos, max_
 
         ws = wb[nome]
         resultado_conciliacao = conciliar_pagamentos_obs_aba(
-            ws, max_combinacao=max_combinacao, max_combinacao_obs=max_combinacao_obs
+            ws, max_combinacao=max_combinacao
         )
         if resultado_conciliacao is None:
             continue
