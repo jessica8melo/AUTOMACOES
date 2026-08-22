@@ -1,0 +1,5 @@
+pdfplumber
+pdf2image
+pytesseract
+Pillow
+pyinstaller
