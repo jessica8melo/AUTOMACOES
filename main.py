@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Script principal: encadeia a análise do controle financeiro com o
-cruzamento no relatório de pagamentos.
+Script principal: encadeia a análise do controle financeiro, o
+cruzamento no relatório de pagamentos e a conferência no relatório de
+recebimento integrado.
 
 Fluxo:
     1. Roda controle_financeiro.analisar() sobre a planilha de controle
@@ -11,18 +12,25 @@ Fluxo:
     2. Para cada CAT distinto encontrado nessas ocorrências, roda
        relatorio_pagamentos.filtrar_por_cat() sobre a planilha de
        pagamentos, trazendo as linhas de "Fornecedor" que batem com aquele
-       CAT, e soma os valores por "Data Pagamento".
+       CAT, e soma os valores por "Data Pagamento". Os pagamentos
+       encontrados são agrupados pela ORG do respectivo CAT.
+    3. Para cada ORG com pagamentos da etapa 2, roda
+       relatorio_recebimento.verificar_por_org() sobre a planilha de
+       Recebimento Integrado, conferindo N.F == NFF e ISS == Valor; quando
+       ambos batem, pinta a célula "N.F" de amarelo.
 
 Uso:
     python main.py [--controle CAMINHO.xlsx] [--sheet-controle NOME]
                     [--pagamento CAMINHO.xlsx] [--sheet-pagamento NOME]
+                    [--recebimento CAMINHO.xlsx] [--sheet-recebimento NOME]
+                    [--nao-salvar-recebimento]
 
 Se os caminhos não forem informados, usam os valores padrão definidos nos
 próprios módulos (DEFAULT_PATH de cada um).
 
-Requisito: controle_financeiro.py, relatorio_pagamentos.py e
-tabela_localidade.py devem estar na mesma pasta deste script (ou no
-PYTHONPATH).
+Requisito: controle_financeiro.py, relatorio_pagamentos.py,
+relatorio_recebimento.py e tabela_localidade.py devem estar na mesma pasta
+deste script (ou no PYTHONPATH).
 """
 
 import argparse
@@ -31,6 +39,8 @@ from controle_financeiro import analisar as analisar_controle
 from controle_financeiro import DEFAULT_PATH as DEFAULT_CONTROLE
 from relatorio_pagamentos import filtrar_por_cat, agrupar_valor_por_data
 from relatorio_pagamentos import DEFAULT_PATH as DEFAULT_PAGAMENTO
+from relatorio_recebimento import verificar_por_org, imprimir_resultados as imprimir_resultados_recebimento
+from relatorio_recebimento import DEFAULT_PATH as DEFAULT_RECEBIMENTO
 
 
 def imprimir_ocorrencias_controle(ocorrencias):
@@ -59,9 +69,11 @@ def processar_pagamentos_por_cat(caminho_pagamento, cats, sheet_pagamento=None):
     print("ETAPA 2 — Relatório de pagamentos (cruzado por CAT)")
     print("=" * 70)
 
+    pagamentos_por_org = {}
+
     if not cats:
         print("Nenhum CAT válido foi identificado na etapa 1; nada a cruzar.\n")
-        return
+        return pagamentos_por_org
 
     for cat in cats:
         print(f"\n--- CAT: {cat} ---")
@@ -94,6 +106,36 @@ def processar_pagamentos_por_cat(caminho_pagamento, cats, sheet_pagamento=None):
             data = grupo["Data Pagamento"] or "(sem data)"
             print(f"{data}: {grupo['Total']:.2f}")
 
+        # Acumula os pagamentos encontrados sob a ORG desse CAT, para a
+        # etapa 3 (relatório de recebimento é cruzado por ORG, não por CAT).
+        org = registro_cat.get("org")
+        if org:
+            pagamentos_por_org.setdefault(org, []).extend(resultados)
+
+    return pagamentos_por_org
+
+
+def processar_recebimento_por_org(caminho_recebimento, pagamentos_por_org, sheet_recebimento=None, salvar=True):
+    print("=" * 70)
+    print("ETAPA 3 — Relatório de Recebimento Integrado (cruzado por ORG)")
+    print("=" * 70)
+
+    if not pagamentos_por_org:
+        print("Nenhum pagamento disponível da etapa 2; nada a cruzar.\n")
+        return
+
+    for org, pagamentos in pagamentos_por_org.items():
+        try:
+            resultados = verificar_por_org(
+                caminho_recebimento, org, pagamentos,
+                sheet=sheet_recebimento, salvar=salvar,
+            )
+        except ValueError as erro:
+            print(f"Aviso: {erro}")
+            continue
+
+        imprimir_resultados_recebimento(org, resultados)
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -118,6 +160,18 @@ def main():
         "--sheet-pagamento", default=None,
         help="Nome da aba do relatório de pagamento (padrão: aba ativa)"
     )
+    parser.add_argument(
+        "--recebimento", default=DEFAULT_RECEBIMENTO,
+        help="Caminho do arquivo .xlsx do Relatório de Recebimento Integrado"
+    )
+    parser.add_argument(
+        "--sheet-recebimento", default=None,
+        help="Nome da aba do recebimento (padrão: aba ativa)"
+    )
+    parser.add_argument(
+        "--nao-salvar-recebimento", action="store_true",
+        help="Não grava a cor amarela na coluna N.F do recebimento (só mostra o resultado)"
+    )
     args = parser.parse_args()
 
     # Etapa 1: controle_financeiro
@@ -132,7 +186,16 @@ def main():
             cats_distintos.append(cat)
 
     # Etapa 2: relatorio_pagamentos, um cruzamento por CAT distinto
-    processar_pagamentos_por_cat(args.pagamento, cats_distintos, args.sheet_pagamento)
+    pagamentos_por_org = processar_pagamentos_por_cat(
+        args.pagamento, cats_distintos, args.sheet_pagamento
+    )
+
+    # Etapa 3: relatorio_recebimento, um cruzamento por ORG
+    processar_recebimento_por_org(
+        args.recebimento, pagamentos_por_org,
+        sheet_recebimento=args.sheet_recebimento,
+        salvar=not args.nao_salvar_recebimento,
+    )
 
 
 if __name__ == "__main__":

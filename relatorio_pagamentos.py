@@ -51,6 +51,21 @@ def _formatar_data(valor):
     return valor
 
 
+def _extrair_nff(valor):
+    """
+    A célula "NFF" às vezes vem com texto adicional além do número, ex:
+        "3525 - 019609199 - ISS"  ->  "3525"
+    Esta função pega apenas a parte antes do primeiro "-" (com espaços nas
+    pontas removidos). Se o valor não for um texto com "-" (ex.: já vier
+    só o número, como int/float), é devolvido sem alteração.
+    """
+    if valor is None:
+        return None
+    if isinstance(valor, str) and "-" in valor:
+        return valor.split("-", 1)[0].strip()
+    return valor
+
+
 def resolver_cat(cat_informado):
     """
     Confirma que o CAT informado existe na TABELA_LOCALIDADE.
@@ -104,7 +119,7 @@ def filtrar_por_cat(caminho_arquivo, cat_informado, nome_aba=None):
                 {
                     "Grupo Pagamentos": row[col_grupo - 1].value if col_grupo else None,
                     "Fornecedor": fornecedor,
-                    "NFF": row[col_nff - 1].value if col_nff else None,
+                    "NFF": _extrair_nff(row[col_nff - 1].value) if col_nff else None,
                     "Data Pagamento": _formatar_data(row[col_data_pgto - 1].value) if col_data_pgto else None,
                     "Valor": row[col_valor - 1].value if col_valor else None,
                 }
