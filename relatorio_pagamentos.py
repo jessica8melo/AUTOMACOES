@@ -113,6 +113,40 @@ def filtrar_por_cat(caminho_arquivo, cat_informado, nome_aba=None):
     return registro_cat, resultados
 
 
+def agrupar_valor_por_data(resultados):
+    """
+    Agrupa os resultados por "Data Pagamento" e soma a coluna "Valor" de cada grupo.
+    Linhas sem "Data Pagamento" são agrupadas sob a chave None.
+    Valores não numéricos são ignorados na soma.
+
+    Retorna uma lista de dicts [{"Data Pagamento": ..., "Total": ...}, ...]
+    ordenada por data (linhas sem data vão para o final).
+    """
+    somas = {}
+    for item in resultados:
+        data = item["Data Pagamento"]
+        valor = item["Valor"]
+        if isinstance(valor, (int, float)):
+            somas[data] = somas.get(data, 0) + valor
+        else:
+            somas.setdefault(data, somas.get(data, 0))
+
+    def chave_ordenacao(data):
+        if data is None:
+            return (1, "")
+        # já vem formatada como "dd/mm/aaaa"; convertemos para ordenar corretamente
+        try:
+            dia, mes, ano = data.split("/")
+            return (0, f"{ano}{mes}{dia}")
+        except (AttributeError, ValueError):
+            return (0, str(data))
+
+    return [
+        {"Data Pagamento": data, "Total": total}
+        for data, total in sorted(somas.items(), key=lambda kv: chave_ordenacao(kv[0]))
+    ]
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Filtra a coluna Fornecedor do relatório de pagamento a partir de um CAT."
@@ -136,6 +170,12 @@ def main():
             f"{i}. Fornecedor: {item['Fornecedor']} | Grupo: {item['Grupo Pagamentos']} | "
             f"NFF: {item['NFF']} | Data Pagamento: {item['Data Pagamento']} | Valor: {item['Valor']}"
         )
+
+    print("\nSoma de Valor por Data Pagamento:\n")
+    totais = agrupar_valor_por_data(resultados)
+    for grupo in totais:
+        data = grupo["Data Pagamento"] or "(sem data)"
+        print(f"{data}: {grupo['Total']:.2f}")
 
 
 if __name__ == "__main__":
