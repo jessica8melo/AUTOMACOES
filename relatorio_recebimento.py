@@ -43,6 +43,7 @@ COL_ORGANIZACAO = "Organização"
 COL_NF = "N.F"
 COL_ISS = "ISS"
 COL_FORNECEDOR = "Fornecedor"
+COL_OBSERVACOES = "Observações"
 
 AMARELO = PatternFill(start_color="FFFFFF00", end_color="FFFFFF00", fill_type="solid")
 
@@ -64,6 +65,44 @@ def _mapear_colunas(worksheet):
     return colunas
 
 
+def _observacao_da_linha(worksheet, linha, col_observacoes):
+    """Devolve o texto da coluna 'Observações' dessa linha, ou None se vazio/coluna ausente."""
+    if not col_observacoes:
+        return None
+    valor = worksheet.cell(row=linha, column=col_observacoes).value
+    if valor is None:
+        return None
+    texto = str(valor).strip()
+    return texto or None
+
+
+def _comentarios_da_linha(worksheet, linha, colunas):
+    """Devolve os comentários nativos do Excel (ícone de nota) anexados a células dessa linha."""
+    comentarios = []
+    for nome_coluna, col in colunas.items():
+        celula = worksheet.cell(row=linha, column=col)
+        if celula.comment is not None and celula.comment.text:
+            comentarios.append(f"{nome_coluna}: {celula.comment.text.strip()}")
+    return comentarios
+
+
+def _avisos_da_linha(worksheet, linha, colunas, col_observacoes):
+    """
+    Reúne, em uma lista de textos, os avisos encontrados nessa linha:
+    texto na coluna 'Observações' e/ou comentários nativos do Excel 
+    em qualquer célula da linha.
+    """
+    avisos = []
+    observacao = _observacao_da_linha(worksheet, linha, col_observacoes)
+    if observacao:
+        avisos.append(f'Observações: "{observacao}"')
+
+    for comentario in _comentarios_da_linha(worksheet, linha, colunas):
+        avisos.append(f"comentário em {comentario}")
+
+    return avisos
+
+
 def _para_texto(valor):
     """
     Converte um valor para texto de forma EXATA (sem normalizar formatação
@@ -83,7 +122,9 @@ def filtrar_por_org(caminho, org, sheet=None):
     """
     Retorna, sem modificar nada, as linhas da planilha de recebimento cuja
     coluna "Organização" seja igual a `org`. Cada item tem:
-        {"Fornecedor", "N.F", "ISS", "linha"}
+        {"Fornecedor", "N.F", "ISS", "linha", "avisos"}
+    "avisos" é uma lista com textos indicando, por exemplo, que a linha tem 
+    texto na coluna "Observações"/comentário.
     Útil para inspecionar os dados antes de rodar verificar_por_org().
     """
     workbook = openpyxl.load_workbook(caminho, data_only=True)
@@ -94,6 +135,7 @@ def filtrar_por_org(caminho, org, sheet=None):
     col_nf = colunas[COL_NF]
     col_iss = colunas[COL_ISS]
     col_fornecedor = colunas[COL_FORNECEDOR]
+    col_observacoes = colunas.get(COL_OBSERVACOES)
 
     encontrados = []
     for linha in range(2, worksheet.max_row + 1):
@@ -105,6 +147,7 @@ def filtrar_por_org(caminho, org, sheet=None):
             "N.F": worksheet.cell(row=linha, column=col_nf).value,
             "ISS": worksheet.cell(row=linha, column=col_iss).value,
             "linha": linha,
+            "avisos": _avisos_da_linha(worksheet, linha, colunas, col_observacoes),
         })
     return encontrados
 
@@ -126,11 +169,16 @@ def verificar_por_org(caminho, org, pagamentos, sheet=None, salvar=True):
     Cada NFF de `pagamentos` só é usada uma única vez (para não casar duas
     linhas do recebimento com o mesmo pagamento).
 
+    Além disso, para cada linha processada, verifica se tem texto na coluna "Observações" 
+    (ou comentário nativo do Excel em alguma célula da linha). Se houver, imprime um aviso 
+    no terminal na hora e inclui os detalhes no campo "avisos" do resultado.
+
     Retorna uma lista de dicts:
         {
             "Organização", "Fornecedor", "N.F", "ISS", "linha",
             "status": "OK" | "INCONSISTENTE",
             "motivo": None | texto explicando a inconsistência,
+            "avisos": lista de textos (vazia se não houver nada a avisar),
         }
     """
     workbook = openpyxl.load_workbook(caminho)
@@ -141,6 +189,7 @@ def verificar_por_org(caminho, org, pagamentos, sheet=None, salvar=True):
     col_nf = colunas[COL_NF]
     col_iss = colunas[COL_ISS]
     col_fornecedor = colunas[COL_FORNECEDOR]
+    col_observacoes = colunas.get(COL_OBSERVACOES)
 
     # Índice de pagamentos por NFF (texto exato); cada NFF pode aparecer
     # mais de uma vez, então guardamos uma lista e vamos "consumindo" os
@@ -185,6 +234,13 @@ def verificar_por_org(caminho, org, pagamentos, sheet=None, salvar=True):
             status = "INCONSISTENTE"
             motivo = f"Nenhum pagamento com NFF {nf_texto} foi encontrado na Etapa 2."
 
+        avisos = _avisos_da_linha(worksheet, linha, colunas, col_observacoes)
+        if avisos:
+            print(
+                f"⚠️  Atenção — linha {linha} (Fornecedor: {cel_fornecedor.value}, "
+                f"N.F: {cel_nf.value}): {'; '.join(avisos)}"
+            )
+
         resultados.append({
             "Organização": valor_org,
             "Fornecedor": cel_fornecedor.value,
@@ -193,6 +249,7 @@ def verificar_por_org(caminho, org, pagamentos, sheet=None, salvar=True):
             "linha": linha,
             "status": status,
             "motivo": motivo,
+            "avisos": avisos,
         })
 
     if salvar:
@@ -209,7 +266,11 @@ def imprimir_resultados(org, resultados):
 
     ok = sum(1 for r in resultados if r["status"] == "OK")
     inconsistentes = len(resultados) - ok
-    print(f"Total de linhas: {len(resultados)}  |  OK: {ok}  |  Inconsistentes: {inconsistentes}\n")
+    com_aviso = sum(1 for r in resultados if r.get("avisos"))
+    resumo = f"Total de linhas: {len(resultados)}  |  OK: {ok}  |  Inconsistentes: {inconsistentes}"
+    if com_aviso:
+        resumo += f"  |  Com aviso: {com_aviso}"
+    print(resumo + "\n")
 
     for i, item in enumerate(resultados, start=1):
         linha_info = (
@@ -219,6 +280,8 @@ def imprimir_resultados(org, resultados):
         print(linha_info)
         if item["motivo"]:
             print(f"   Motivo: {item['motivo']}")
+        if item.get("avisos"):
+            print(f"   ⚠️  Aviso: {'; '.join(item['avisos'])}")
 
 
 def _main():
