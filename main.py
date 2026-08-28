@@ -24,9 +24,21 @@ Uso:
                     [--pagamento CAMINHO.xlsx] [--sheet-pagamento NOME]
                     [--recebimento CAMINHO.xlsx] [--sheet-recebimento NOME]
                     [--nao-salvar-recebimento]
+                    [--cat "Nome do CAT"]
 
 Se os caminhos não forem informados, usam os valores padrão definidos nos
 próprios módulos (DEFAULT_PATH de cada um).
+
+Rodar apenas um CAT específico:
+    Use --cat "Nome do CAT" para pular a Etapa 1 (controle financeiro) e
+    rodar as Etapas 2 e 3 apenas para o CAT informado, ex:
+
+        python main.py --cat "Bauru"
+
+    Nesse modo o script não varre o controle financeiro em busca de todos
+    os CATs pendentes; ele cruza diretamente esse CAT com o relatório de
+    pagamentos (Etapa 2) e, em seguida, com o relatório de recebimento
+    integrado da ORG correspondente (Etapa 3).
 
 Requisito: controle_financeiro.py, relatorio_pagamentos.py,
 relatorio_recebimento.py e tabela_localidade.py devem estar na mesma pasta
@@ -172,18 +184,29 @@ def main():
         "--nao-salvar-recebimento", action="store_true",
         help="Não grava a cor amarela na coluna N.F do recebimento (só mostra o resultado)"
     )
+    parser.add_argument(
+        "--cat", default=None,
+        help=(
+            'Roda apenas para este CAT específico (ex: "Bauru"), pulando a '
+            "Etapa 1 (controle financeiro) e indo direto para as Etapas 2 e 3."
+        ),
+    )
     args = parser.parse_args()
 
-    # Etapa 1: controle_financeiro
-    ocorrencias = analisar_controle(args.controle, args.sheet_controle)
-    imprimir_ocorrencias_controle(ocorrencias)
+    if args.cat:
+        # Modo "um CAT específico": pula a Etapa 1 por completo.
+        cats_distintos = [args.cat]
+    else:
+        # Etapa 1: controle_financeiro
+        ocorrencias = analisar_controle(args.controle, args.sheet_controle)
+        imprimir_ocorrencias_controle(ocorrencias)
 
-    # Coleta os CATs distintos (na ordem em que aparecem, sem repetir)
-    cats_distintos = []
-    for item in ocorrencias:
-        cat = item["CAT"]
-        if cat and cat not in cats_distintos:
-            cats_distintos.append(cat)
+        # Coleta os CATs distintos (na ordem em que aparecem, sem repetir)
+        cats_distintos = []
+        for item in ocorrencias:
+            cat = item["CAT"]
+            if cat and cat not in cats_distintos:
+                cats_distintos.append(cat)
 
     # Etapa 2: relatorio_pagamentos, um cruzamento por CAT distinto
     pagamentos_por_org = processar_pagamentos_por_cat(
