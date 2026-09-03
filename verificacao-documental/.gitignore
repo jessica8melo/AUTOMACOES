@@ -1,0 +1,31 @@
+# Ambiente virtual Python
+.venv/
+venv/
+env/
+
+# Cache de bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Saída de build do PyInstaller (o .spec continua versionado,
+# só o resultado gerado por ele que não deve ir pro repositório)
+build/
+dist/
+
+# Log e configuração locais do app desktop (gravados em
+# %USERPROFILE%, mas ignorados aqui por segurança caso alguém
+# rode o app com HOME apontando pra dentro do repositório)
+.validador_documentos_log.txt
+.validador_documentos_config.json
+
+# Editores/IDEs
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# macOS (caso alguém abra o repo num Mac)
+.DS_Store
